@@ -2062,7 +2062,13 @@ Exemplos:
     print(f"  Sync: {args.sync} (tol: {args.tolerance}, max: {args.maxstretch})")
     print(f"  Qualidade: {args.qualidade}")
 
+    # Dicionario para armazenar tempos de cada etapa
+    import time
+    tempos_etapas = {}
+    tempo_inicio_total = time.time()
+
     # ========== ETAPA 1-2: Extracao ==========
+    t_etapa = time.time()
     print("\n" + "="*60)
     print("=== ETAPA 1-2: Validacao e Extracao ===")
     print("="*60)
@@ -2078,13 +2084,16 @@ Exemplos:
         voice_sample = extract_voice_sample(audio_src, workdir)
 
     save_checkpoint(workdir, 2, "extraction")
+    tempos_etapas["1-2_extracao"] = time.time() - t_etapa
 
     # ========== ETAPA 3: Transcricao ==========
+    t_etapa = time.time()
     asr_json, asr_srt, segs, detected_lang = transcribe_faster_whisper(
         audio_src, workdir, args.src, args.whisper_model,
         diarize=args.diarize, num_speakers=args.num_speakers
     )
     save_checkpoint(workdir, 3, "transcription")
+    tempos_etapas["3_transcricao"] = time.time() - t_etapa
 
     # Usar idioma detectado se nao foi especificado
     src_lang = detected_lang or args.src
@@ -2096,6 +2105,7 @@ Exemplos:
     print(f"[INFO] CPS original calculado: {cps_original:.1f}")
 
     # ========== ETAPA 4: Traducao ==========
+    t_etapa = time.time()
     if args.tradutor == "ollama":
         result = translate_segments_ollama(segs, src_lang, args.tgt, workdir, args.modelo, cps_original)
         if result is None:
@@ -2110,12 +2120,16 @@ Exemplos:
             segs, src_lang, args.tgt, workdir, args.large_model, cps_original
         )
     save_checkpoint(workdir, 4, "translation")
+    tempos_etapas["4_traducao"] = time.time() - t_etapa
 
     # ========== ETAPA 5: Split ==========
+    t_etapa = time.time()
     segs_trad = split_long_segments(segs_trad, args.maxdur)
     save_checkpoint(workdir, 5, "split")
+    tempos_etapas["5_split"] = time.time() - t_etapa
 
     # ========== ETAPA 6: TTS ==========
+    t_etapa = time.time()
     if args.tts == "xtts" and voice_sample:
         result = tts_xtts_clone(segs_trad, workdir, args.tgt, voice_sample)
         if result[0] is None:
@@ -2144,12 +2158,14 @@ Exemplos:
         )
 
     save_checkpoint(workdir, 6, "tts")
+    tempos_etapas["6_tts"] = time.time() - t_etapa
 
     # ========== ETAPA 6.1: Fade ==========
     if args.fade == 1:
         seg_files = apply_fade(seg_files, workdir)
 
     # ========== ETAPA 7: Sincronizacao ==========
+    t_etapa = time.time()
     print("\n" + "="*60)
     print("=== ETAPA 7: Sincronizacao ===")
     print("="*60)
@@ -2172,18 +2188,28 @@ Exemplos:
 
     seg_files = fixed
     save_checkpoint(workdir, 7, "sync")
+    tempos_etapas["7_sync"] = time.time() - t_etapa
 
     # ========== ETAPA 8: Concatenacao ==========
+    t_etapa = time.time()
     dub_raw = concat_segments(seg_files, workdir, sr_segs)
     save_checkpoint(workdir, 8, "concat")
+    tempos_etapas["8_concat"] = time.time() - t_etapa
 
     # ========== ETAPA 9: Pos-processamento ==========
+    t_etapa = time.time()
     dub_final = postprocess_audio(dub_raw, workdir, args.rate_audio)
     save_checkpoint(workdir, 9, "postprocess")
+    tempos_etapas["9_postprocess"] = time.time() - t_etapa
 
     # ========== ETAPA 10: Mux ==========
+    t_etapa = time.time()
     mux_video(video_in, dub_final, out_mp4, args.bitrate)
     save_checkpoint(workdir, 10, "mux")
+    tempos_etapas["10_mux"] = time.time() - t_etapa
+
+    # Tempo total
+    tempo_total = time.time() - tempo_inicio_total
 
     # ========== Metricas ==========
     metrics = calculate_quality_metrics(segs_trad, seg_files, workdir)
@@ -2211,6 +2237,10 @@ Exemplos:
             "seed": GLOBAL_SEED,
         },
         "metrics": metrics,
+        "tempos": {
+            "etapas": tempos_etapas,
+            "total_segundos": tempo_total,
+        },
     }
 
     with open(Path(workdir, "logs.json"), "w", encoding="utf-8") as f:
@@ -2226,6 +2256,41 @@ Exemplos:
     print(f"    Logs: {workdir}/logs.json")
     print(f"    Metricas: {workdir}/quality_metrics.json")
     print(f"\n  Intermediarios em: {workdir}/")
+
+    # Exibir tempos de cada etapa
+    print("\n" + "="*60)
+    print("  TEMPOS POR ETAPA")
+    print("="*60)
+    nomes_etapas = {
+        "1-2_extracao": "1-2. Extracao de audio",
+        "3_transcricao": "3. Transcricao (Whisper)",
+        "4_traducao": "4. Traducao",
+        "5_split": "5. Split de segmentos",
+        "6_tts": "6. Sintese de voz (TTS)",
+        "7_sync": "7. Sincronizacao",
+        "8_concat": "8. Concatenacao",
+        "9_postprocess": "9. Pos-processamento",
+        "10_mux": "10. Mixagem final",
+    }
+    for key, nome in nomes_etapas.items():
+        if key in tempos_etapas:
+            t = tempos_etapas[key]
+            if t >= 3600:
+                tempo_str = f"{int(t//3600)}h {int((t%3600)//60)}m {int(t%60)}s"
+            elif t >= 60:
+                tempo_str = f"{int(t//60)}m {int(t%60)}s"
+            else:
+                tempo_str = f"{t:.1f}s"
+            print(f"  {nome}: {tempo_str}")
+
+    # Tempo total
+    if tempo_total >= 3600:
+        total_str = f"{int(tempo_total//3600)}h {int((tempo_total%3600)//60)}m {int(tempo_total%60)}s"
+    elif tempo_total >= 60:
+        total_str = f"{int(tempo_total//60)}m {int(tempo_total%60)}s"
+    else:
+        total_str = f"{tempo_total:.1f}s"
+    print(f"\n  TEMPO TOTAL: {total_str}")
     print("="*60)
 
 if __name__ == "__main__":
