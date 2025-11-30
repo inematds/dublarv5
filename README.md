@@ -1,272 +1,176 @@
-# 🎬 Dublar - Sistema de Dublagem Automática de Vídeos
+# Dublar - Sistema de Dublagem Automatica de Videos
 
-Sistema completo de dublagem automática de vídeos usando IA para transcrição, tradução e síntese de voz.
+Sistema de dublagem automatica usando IA para transcricao, traducao e sintese de voz.
 
-## 🌟 Características
+## Caracteristicas
 
-- **Transcrição automática** com Whisper (faster-whisper)
-- **Tradução** com facebook/m2m100_418M (suporta múltiplos idiomas)
-- **Síntese de voz** com Bark ou Coqui TTS
-- **Sincronização inteligente** com 4 modos: none, fit, pad, smart
-- **Suporte GPU** NVIDIA CUDA (opcional, funciona em CPU)
-- **Preservação de termos técnicos** em vídeos de programação
-- **Processamento em lote** de múltiplos vídeos
+- **Transcricao automatica** com Whisper (faster-whisper)
+- **Traducao** com M2M100 ou Ollama (LLM local)
+- **Sintese de voz** com Edge TTS, Bark, Piper ou XTTS
+- **Sincronizacao inteligente** com modos: none, fit, pad, smart
+- **Download YouTube** direto da URL
+- **Clonagem de voz** com XTTS
+- **Deteccao de multiplos falantes** (diarizacao)
+- **Suporte GPU** NVIDIA CUDA (opcional)
 
-## 🚀 Início Rápido
+## Instalacao
 
-### Windows:
+### Linux
+
 ```bash
 git clone https://github.com/inematds/dublar.git
 cd dublar
-instalar.bat
-dublar.bat video.mp4
-```
-
-### Linux:
-```bash
-git clone https://github.com/inematds/dublar.git
-cd dublar
-python3 -m venv venv
+chmod +x instalar.sh
+./instalar.sh
 source venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -r requirements.txt
-python3 dublar.py video.mp4 --src_lang en --tgt_lang pt --tts bark --sync smart
 ```
 
-**📖 [Guia completo de instalação Linux](INSTALL_LINUX.md)**
+### Dependencias opcionais
 
-## 📋 Requisitos
-
-- **Python**: 3.10 ou superior
-- **FFmpeg**: Obrigatório (processamento de vídeo/áudio)
-- **RAM**: 8GB mínimo, 16GB+ recomendado
-- **Disco**: 10GB+ para modelos de IA
-- **GPU** (opcional): NVIDIA com CUDA 11.8+ para processamento mais rápido
-
-## 🎯 Uso Básico
-
-### Sintaxe:
 ```bash
-python dublar.py VIDEO.mp4 [opções]
+# Ollama para traducao natural
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3
+
+# Rubberband para time-stretch
+sudo apt install rubberband-cli
 ```
 
-### Exemplos:
+## Uso Basico
 
-**Inglês → Português (padrão):**
 ```bash
-python dublar.py tutorial.mp4
+# Ativar ambiente
+source venv/bin/activate
+
+# Dublagem simples (auto-detecta idioma origem)
+python dublar_pro_v4.py --in video.mp4 --tgt pt
+
+# Especificar idioma origem
+python dublar_pro_v4.py --in video.mp4 --src en --tgt pt
+
+# URL do YouTube
+python dublar_pro_v4.py --in "https://youtube.com/watch?v=XXX" --tgt pt
 ```
 
-**Espanhol → Inglês:**
+## Presets de Qualidade
+
 ```bash
-python dublar.py video.mp4 --src_lang es --tgt_lang en
+# Rapido (Edge + M2M100 + Whisper small)
+python dublar_pro_v4.py --in video.mp4 --tgt pt --qualidade rapido
+
+# Balanceado (padrao)
+python dublar_pro_v4.py --in video.mp4 --tgt pt --qualidade balanceado
+
+# Maximo (Ollama + Whisper large + diarizacao)
+python dublar_pro_v4.py --in video.mp4 --tgt pt --qualidade maximo
 ```
 
-**Vídeo técnico com preservação de termos:**
+## Exemplos Avancados
+
 ```bash
-python dublar_tech_v2.py codigo.mp4 --src_lang en --tgt_lang pt
+# Traducao via Ollama (mais natural)
+python dublar_pro_v4.py --in video.mp4 --src en --tgt pt --tradutor ollama
+
+# Clonar voz do video original
+python dublar_pro_v4.py --in video.mp4 --src en --tgt pt --clonar-voz
+
+# Multiplos falantes
+python dublar_pro_v4.py --in video.mp4 --src en --tgt pt --diarize
+
+# Voz especifica
+python dublar_pro_v4.py --in video.mp4 --tgt pt --voice pt-BR-FranciscaNeural
 ```
 
-**Usar voz específica:**
-```bash
-python dublar.py video.mp4 --voice v2/pt_speaker_5
-```
+## Parametros Principais
 
-### Parâmetros Principais:
+| Parametro | Descricao | Default |
+|-----------|-----------|---------|
+| `--in` | Video ou URL YouTube | obrigatorio |
+| `--src` | Idioma origem | auto-detectar |
+| `--tgt` | Idioma destino | obrigatorio |
+| `--tts` | edge, bark, piper, xtts | edge |
+| `--tradutor` | m2m100, ollama | m2m100 |
+| `--sync` | none, fit, pad, smart | smart |
+| `--whisper-model` | tiny, small, medium, large | medium |
 
-| Parâmetro | Padrão | Descrição |
-|-----------|--------|-----------|
-| `--src_lang` | `en` | Idioma de origem (en, es, fr, pt, etc.) |
-| `--tgt_lang` | `pt` | Idioma de destino |
-| `--tts` | `bark` | Engine de voz (`bark` ou `coqui`) |
-| `--sync` | `smart` | Modo de sincronização (`none`, `fit`, `pad`, `smart`) |
-| `--voice` | - | Voz específica (ex: `v2/pt_speaker_5`) |
-| `--rate` | `22050` | Taxa de amostragem do áudio final |
+## Vozes Disponiveis
 
-### Modos de Sincronização:
+### Edge TTS (padrao)
+- `pt-BR-AntonioNeural` (masculina)
+- `pt-BR-FranciscaNeural` (feminina)
+- `en-US-GuyNeural` (masculina)
+- `en-US-JennyNeural` (feminina)
 
-- **`none`**: Sem ajuste, pode desincronizar
-- **`fit`**: Comprime/expande áudio para caber no tempo
-- **`pad`**: Adiciona silêncio se necessário
-- **`smart`**: Automático (pad se curto, fit se longo) - **Recomendado**
+### Bark (offline)
+- `v2/pt_speaker_0` a `v2/pt_speaker_9`
+- `v2/en_speaker_0` a `v2/en_speaker_9`
 
-## 📁 Estrutura de Arquivos
+## Requisitos
+
+- Python 3.9+
+- FFmpeg
+- 4GB+ RAM (8GB+ recomendado)
+- GPU opcional (acelera Whisper e Bark)
+
+## Estrutura do Projeto
 
 ```
 dublar/
-├── dublar.py              # Script principal
-├── dublar2.py             # Versão com melhorias de sync
-├── dublar3.py             # Versão com output em pasta separada
-├── dublar31.py            # Versão com preservação de gaps
-├── dublar_tech_v2.py      # Otimizado para vídeos técnicos
-├── dublar_sync_v2.py      # Versão com sync avançado
-│
-├── requirements.txt       # Dependências Python
-│
-├── instalar.bat           # Instalador Windows
-├── dublar.bat             # Launcher Windows
-├── ativar_gpu.bat         # Configurar GPU no Windows
-│
-├── test_*.py              # Scripts de teste
-│
-├── INSTALL_LINUX.md       # 📖 Guia de instalação Linux
-├── README_TECH.md         # Documentação versão técnica
-├── README_SYNC_V2.md      # Documentação sync v2
-├── README_BAT.md          # Documentação scripts Windows
-├── MAPA_ARQUIVOS.md       # Estrutura detalhada do projeto
-│
-├── venv/                  # Ambiente virtual (você cria)
-├── dub_work/              # Temporários (criado automaticamente)
-└── dublado/               # Vídeos finais (criado automaticamente)
+├── dublar_pro_v4.py   # Script principal (v4)
+├── dublar_pro.py      # Versao anterior (v3)
+├── dublar-pro.sh      # Launcher shell
+├── instalar.sh        # Instalador Linux
+├── requirements.txt   # Dependencias Python
+├── venv/              # Ambiente virtual
+├── dub_work/          # Arquivos temporarios (auto)
+└── dublado/           # Videos finais (auto)
 ```
 
-## 🔧 Versões Disponíveis
+## Arquivos Gerados
 
-### Scripts Principais:
+```
+dub_work/
+├── audio_src.wav      # Audio extraido
+├── asr.srt            # Transcricao original
+├── asr_trad.srt       # Traducao
+├── seg_*.wav          # Segmentos TTS
+├── logs.json          # Log completo
+└── checkpoint.json    # Para retomar
 
-1. **`dublar.py`** - Versão base estável
-   - Funcionalidades essenciais
-   - Melhor para começar
+dublado/
+└── video_dublado.mp4  # Resultado final
+```
 
-2. **`dublar_tech_v2.py`** - Para vídeos técnicos
-   - Glossário de 100+ termos técnicos
-   - Preserva nomes de tecnologias
-   - Otimizado para tutoriais de programação
-   - [📖 Documentação](README_TECH.md)
+## Troubleshooting
 
-3. **`dublar_sync_v2.py`** - Sincronização avançada
-   - Melhor alinhamento de áudio
-   - Controle fino de timing
-   - [📖 Documentação](README_SYNC_V2.md)
-
-4. **`dublar31.py`** - Com preservação de pausas
-   - Mantém silêncios entre frases
-   - Mais natural para palestras
-
-## 🧪 Testar Instalação
-
+### FFmpeg nao encontrado
 ```bash
-# Ativar ambiente (se ainda não ativou)
-source venv/bin/activate  # Linux
-# venv\Scripts\activate   # Windows
-
-# Teste rápido
-python test_quick.py
-
-# Testar GPU
-python test_gpu.py
-
-# Testar Whisper
-python test_whisper_gpu.py
-```
-
-## 🌍 Idiomas Suportados
-
-### Transcrição (Whisper):
-Mais de 90 idiomas incluindo: en, pt, es, fr, de, it, ja, ko, zh, ru, ar, hi, etc.
-
-### Tradução (M2M100):
-100 idiomas incluindo todos os principais.
-
-### Síntese de Voz:
-- **Bark**: Multilíngue (en, pt, es, fr, de, it, pl, zh, ja, hi, etc.)
-- **Coqui TTS**: Varia por modelo
-
-## 📊 Fluxo de Processamento
-
-```
-1. Extração de Áudio (FFmpeg)
-   video.mp4 → audio_src.wav
-
-2. Transcrição (Whisper)
-   audio_src.wav → asr.srt + asr.json
-
-3. Tradução (M2M100)
-   asr.json → asr_trad.json + asr_trad.srt
-
-4. Síntese de Voz (Bark/Coqui)
-   asr_trad.json → seg_0001.wav, seg_0002.wav, ...
-
-5. Sincronização (smart/fit/pad/none)
-   seg_*.wav → seg_*_fit.wav
-
-6. Concatenação + Pós-processamento
-   seg_*_fit.wav → dub_final.wav
-
-7. Mixagem Final (FFmpeg)
-   video.mp4 + dub_final.wav → video_dublado.mp4
-```
-
-## 🎓 Documentação Adicional
-
-- **[INSTALL_LINUX.md](INSTALL_LINUX.md)** - Guia completo de instalação no Linux
-- **[README_TECH.md](README_TECH.md)** - Versão otimizada para vídeos técnicos
-- **[README_SYNC_V2.md](README_SYNC_V2.md)** - Sincronização avançada
-- **[README_BAT.md](README_BAT.md)** - Scripts Windows (.bat)
-- **[MAPA_ARQUIVOS.md](MAPA_ARQUIVOS.md)** - Estrutura completa do projeto
-- **[FIX_CUDA.md](FIX_CUDA.md)** - Solução de problemas CUDA
-- **[INSTALACAO_GPU.md](INSTALACAO_GPU.md)** - Configurar GPU NVIDIA
-
-## ⚠️ Notas Importantes
-
-1. **Diretórios automáticos**: `dub_work/` e `dublado/` são criados automaticamente - não crie manualmente
-2. **FFmpeg obrigatório**: Sem FFmpeg nada funciona
-3. **GPU opcional**: Funciona em CPU, apenas mais lento
-4. **Primeira execução**: Download de modelos pode levar tempo (5-10GB)
-5. **Memória**: Vídeos longos (+30min) podem precisar de 16GB+ RAM
-
-## 🐛 Solução de Problemas
-
-### FFmpeg não encontrado:
-```bash
-# Ubuntu/Debian
 sudo apt install ffmpeg
-
-# Windows
-# Baixe de https://ffmpeg.org e adicione ao PATH
 ```
 
-### Erro de CUDA/GPU:
+### Edge TTS nao funciona
 ```bash
-# Forçar CPU (mais estável)
-# Edite o script e mude device="cuda" para device="cpu"
+pip install --upgrade edge-tts
 ```
 
-### Falta de memória:
+### Memoria insuficiente
 ```bash
-# Use vídeos menores ou processe em partes
-# Reduza batch_size no código
+# Usar modelos menores
+--whisper-model small --tts edge
 ```
 
-### Modelos não baixam:
+### Forcar CPU
 ```bash
-# Verifique conexão com internet
-# Modelos são baixados automaticamente do HuggingFace
+export CUDA_VISIBLE_DEVICES=""
+python dublar_pro_v4.py ...
 ```
 
-## 📝 Logs e Debug
+## Documentacao Adicional
 
-Cada execução gera:
-- `dub_work/logs.json` - Log completo do processo
-- `dub_work/asr.srt` - Transcrição original
-- `dub_work/asr_trad.srt` - Tradução
-- `dub_work/*.wav` - Arquivos de áudio intermediários
+- [INSTALL_LINUX.md](INSTALL_LINUX.md) - Guia de instalacao Linux
+- [README_PRO.md](README_PRO.md) - Documentacao v3
+- [README_V4.md](README_V4.md) - Documentacao v4
 
-## 🤝 Contribuindo
+## Licenca
 
-Pull requests são bem-vindos! Para mudanças maiores, abra uma issue primeiro.
-
-## 📄 Licença
-
-Este projeto é open source.
-
-## 🔗 Links Úteis
-
-- **FFmpeg**: https://ffmpeg.org
-- **Whisper**: https://github.com/openai/whisper
-- **Bark**: https://github.com/suno-ai/bark
-- **M2M100**: https://huggingface.co/facebook/m2m100_418M
-
----
-
-**Desenvolvido com ❤️ usando IA de ponta para dublagem de vídeos**
+MIT

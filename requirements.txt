@@ -1,24 +1,72 @@
-# Dependências do Pipeline de Dublagem v2.0
+# Dependencias do Pipeline de Dublagem v4.0 (Dublar Pro)
+# Atualizado: 2025-11-29
 
-# Core ML/AI
+# ============================================
+# CORE ML/AI
+# ============================================
+
+# PyTorch - Framework de deep learning
+# CPU: pip install torch
+# GPU CUDA 11.8: pip install torch --index-url https://download.pytorch.org/whl/cu118
+# GPU CUDA 12.1: pip install torch --index-url https://download.pytorch.org/whl/cu121
 torch>=2.0.0
-transformers>=4.30.0
-faster-whisper>=0.9.0
 
-# Dependências do Transformers/M2M100
+# Transformers - Modelos de traducao (M2M100)
+transformers>=4.30.0
+
+# Faster-Whisper - Transcricao otimizada
+faster-whisper>=1.0.0
+
+# ============================================
+# DEPENDENCIAS DE TRADUCAO
+# ============================================
 sentencepiece>=0.1.99
 protobuf>=3.20.0
 sacremoses>=0.0.53
 
-# TTS Engines
-bark>=0.1.0
-TTS>=0.22.0
+# Ollama client (v4 - traducao via LLM)
+httpx>=0.24.0
 
-# Processamento de Áudio
+# ============================================
+# TTS ENGINES
+# ============================================
+
+# Edge TTS - Microsoft (PADRAO v4, recomendado)
+edge-tts>=6.1.0
+
+# Bark - TTS multilingue da Suno (offline)
+bark>=0.1.0
+
+# Coqui TTS - Alternativa (Python < 3.12 apenas)
+# TTS>=0.22.0
+
+# ============================================
+# PROCESSAMENTO DE AUDIO
+# ============================================
 scipy>=1.10.0
 numpy>=1.24.0
-librosa>=0.10.0  # Para VAD (Voice Activity Detection)
+librosa>=0.10.0
 soundfile>=0.12.0
 
-# Utilitários
+# ============================================
+# VIDEO (v4 - download YouTube)
+# ============================================
+yt-dlp>=2023.0.0
+
+# ============================================
+# UTILITARIOS
+# ============================================
 Pillow>=10.0.0
+
+# ============================================
+# DEPENDENCIAS DO SISTEMA (instalar via apt/brew)
+# ============================================
+# sudo apt install ffmpeg
+# sudo apt install rubberband-cli  # Opcional, melhor time-stretch
+
+# ============================================
+# OPCIONAIS (instalar separadamente)
+# ============================================
+# pip install ollama           # Se quiser usar API Python do Ollama
+# pip install pyannote.audio   # Para diarizacao (detectar falantes)
+# pip install gradio           # Para interface web
