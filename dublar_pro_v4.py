@@ -673,8 +673,8 @@ def ajustar_texto_para_duracao(texto, duracao_alvo, cps_original, idioma="pt"):
 
     FASE 2: CPS Adaptativo - usa o CPS real do video original
     """
-    # Usar CPS do audio original em vez do default do idioma
-    cps_alvo = cps_original * 1.1  # 10% de margem
+    # Usar CPS do audio original com margem maior (30%) para TTS
+    cps_alvo = cps_original * 1.3
 
     chars_alvo = int(duracao_alvo * cps_alvo)
     chars_atual = len(texto)
@@ -685,32 +685,46 @@ def ajustar_texto_para_duracao(texto, duracao_alvo, cps_original, idioma="pt"):
     # Precisa reduzir
     ratio = chars_alvo / chars_atual
 
-    if ratio >= 0.9:
-        # Pequena reducao - remover enchimentos
-        enchimentos = [
-            r'\bna verdade\b', r'\bbasicamente\b', r'\bgeralmente\b',
-            r'\bsimplesmente\b', r'\brealmente\b', r'\bcertamente\b',
-            r'\bobviamente\b', r'\bnaturalmente\b', r'\bprovavelmente\b',
-            r'\bpraticamente\b', r'\bdefinitivamente\b',
-        ]
-        simplificado = texto
-        for pattern in enchimentos:
-            simplificado = re.sub(pattern, '', simplificado, flags=re.IGNORECASE)
-        simplificado = re.sub(r' +', ' ', simplificado).strip()
+    # Remover enchimentos primeiro (sempre)
+    enchimentos = [
+        r'\bna verdade\b', r'\bbasicamente\b', r'\bgeralmente\b',
+        r'\bsimplesmente\b', r'\brealmente\b', r'\bcertamente\b',
+        r'\bobviamente\b', r'\bnaturalmente\b', r'\bprovavelmente\b',
+        r'\bpraticamente\b', r'\bdefinitivamente\b', r'\bde fato\b',
+        r'\bcom certeza\b', r'\bde qualquer forma\b', r'\bna realidade\b',
+        r'\bpor assim dizer\b', r'\bdigamos assim\b', r'\bem outras palavras\b',
+        r'\bpor exemplo\b', r'\bvocê sabe\b', r'\bentão\b', r'\bbem\b',
+        r'\bquero dizer\b', r'\bna minha opinião\b', r'\beu acho que\b',
+    ]
+    simplificado = texto
+    for pattern in enchimentos:
+        simplificado = re.sub(pattern, '', simplificado, flags=re.IGNORECASE)
+    simplificado = re.sub(r' +', ' ', simplificado).strip()
+
+    # Recalcular
+    chars_atual = len(simplificado)
+    if chars_atual <= chars_alvo:
         return simplificado
 
-    elif ratio >= 0.7:
+    ratio = chars_alvo / chars_atual
+
+    if ratio >= 0.7:
         # Reducao media - truncar mantendo sentido
-        palavras = texto.split()
-        palavras_alvo = int(len(palavras) * ratio)
+        palavras = simplificado.split()
+        palavras_alvo = max(int(len(palavras) * ratio), 3)
         simplificado = ' '.join(palavras[:palavras_alvo])
         if not simplificado.endswith(('.', '!', '?')):
             simplificado += '.'
         return simplificado
 
     else:
-        # Reducao grande - pedir traducao mais curta
-        return texto  # Sera tratado pelo LLM com instrucao de tamanho
+        # Reducao grande - truncar mais agressivamente
+        palavras = simplificado.split()
+        palavras_alvo = max(int(len(palavras) * 0.5), 3)  # Pelo menos 50% ou 3 palavras
+        simplificado = ' '.join(palavras[:palavras_alvo])
+        if not simplificado.endswith(('.', '!', '?')):
+            simplificado += '.'
+        return simplificado
 
 # ============================================================================
 # FASE 2: TRADUCAO COM CONTEXTO VIA OLLAMA
@@ -748,27 +762,25 @@ def translate_ollama_with_context(text, src_lang, tgt_lang, model="llama3",
             trad = seg.get("text_trad", "")[:50]
             context_text += f"- \"{orig}\" -> \"{trad}\"\n"
 
-    # Instrucao de tamanho baseado na duracao
-    size_instruction = ""
-    if target_duration and cps_original:
-        max_chars = int(target_duration * cps_original * 1.2)
-        if len(text) > max_chars * 0.8:
-            size_instruction = f"\n- Keep translation under {max_chars} characters (target duration: {target_duration:.1f}s)"
+    # Instrucao de tamanho baseado na duracao - SEMPRE incluir
+    max_chars = int(target_duration * cps_original * 1.1) if target_duration and cps_original else len(text)
+    size_instruction = f"\n- CRITICAL: Keep translation under {max_chars} characters (you have {target_duration:.1f}s to speak this)"
 
     prompt = f"""Translate the following text from {src_name} to {tgt_name}.
 
-Rules:
-- Keep technical terms in English: API, callback, hook, string, array, props, state, function, class, etc.
-- Keep product names in English: Claude Code, ChatGPT, GitHub, React, Python, etc.
-- Translate naturally for spoken narration (this is for video dubbing)
-- Be concise - match the length of the original as closely as possible{size_instruction}
-- Maintain consistency with previous translations (same terms, same style)
-- Do NOT add explanations or notes, just translate
+CRITICAL RULES:
+- This is for VIDEO DUBBING - the translation MUST fit in {target_duration:.1f} seconds
+- Maximum {max_chars} characters allowed - be CONCISE
+- Remove filler words, keep only essential meaning
+- Keep technical terms in English: API, callback, hook, string, array, props, state, function, class
+- Keep product names: Claude Code, ChatGPT, GitHub, React, Python
+- Do NOT add explanations, notes, or extra words
+- If in doubt, use fewer words
 {context_text}
-Text to translate:
+Text ({len(text)} chars):
 {text}
 
-Translation:"""
+Concise translation (max {max_chars} chars):"""
 
     try:
         response = httpx.post(
@@ -1286,17 +1298,34 @@ def tts_edge(segments, workdir, tgt_lang, voice=None, rate="+0%", speaker_voices
 
     print(f"[INFO] Voz padrao: {default_voice}")
     print(f"[INFO] Idioma: {lang}")
-    print(f"[INFO] Rate: {rate}")
+    print(f"[INFO] Rate base: {rate}")
 
     SAMPLE_RATE = 24000
+    CPS_TTS = 14  # Caracteres por segundo do Edge TTS
 
     seg_files = []
     metricas = []
     tsv = Path(workdir, "segments.csv")
 
+    def calcular_rate_dinamico(text, target_dur, base_rate="+0%"):
+        """Calcula rate necessario para o texto caber na duracao"""
+        chars = len(text)
+        dur_estimada = chars / CPS_TTS
+
+        if dur_estimada <= target_dur:
+            return base_rate  # Cabe sem acelerar
+
+        # Precisa acelerar
+        ratio = dur_estimada / target_dur
+        # Converter para percentual (max +50%)
+        pct = min(int((ratio - 1) * 100), 50)
+        return f"+{pct}%"
+
     async def generate_audio(text, output_path, target_dur, voice_to_use):
-        """Gera audio usando Edge TTS"""
-        communicate = edge_tts.Communicate(text, voice_to_use, rate=rate)
+        """Gera audio usando Edge TTS com rate adaptativo"""
+        # Calcular rate dinamico para este segmento
+        dynamic_rate = calcular_rate_dinamico(text, target_dur, rate)
+        communicate = edge_tts.Communicate(text, voice_to_use, rate=dynamic_rate)
         mp3_path = str(output_path).replace(".wav", ".mp3")
         await communicate.save(mp3_path)
 
