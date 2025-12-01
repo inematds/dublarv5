@@ -472,6 +472,86 @@ def diarize_audio(wav_path, workdir, num_speakers=None):
         print(f"[ERRO] Diarizacao falhou: {e}")
         return None
 
+def merge_incomplete_segments(segments, max_duration=15.0):
+    """Junta segmentos que terminam com frase incompleta (virgula, sem pontuacao)
+
+    Resolve o problema do Whisper cortar frases no meio por limite de tempo.
+    Segmentos que terminam com virgula ou sem pontuacao final sao unidos
+    ao proximo segmento para formar frases completas.
+
+    Args:
+        segments: Lista de segmentos do Whisper
+        max_duration: Duracao maxima de um segmento merged (evita segmentos muito longos)
+
+    Returns:
+        Lista de segmentos com frases completas
+    """
+    if not segments:
+        return segments
+
+    def needs_merge(text):
+        """Verifica se o segmento precisa ser unido ao proximo"""
+        text = text.strip()
+        if not text:
+            return False
+        # Termina com virgula
+        if text.endswith(','):
+            return True
+        # Termina com artigo/preposicao (indica frase cortada)
+        incomplete_endings = [
+            ' o', ' a', ' os', ' as', ' um', ' uma', ' uns', ' umas',
+            ' de', ' do', ' da', ' dos', ' das', ' no', ' na', ' nos', ' nas',
+            ' ao', ' aos', ' para', ' por', ' com', ' em', ' que', ' e', ' ou',
+            ' se', ' the', ' to', ' of', ' in', ' and', ' a', ' an', ' this',
+            ' our', ' your', ' my', ' we', ' you', ' it', ' is', ' are',
+        ]
+        text_lower = text.lower()
+        for ending in incomplete_endings:
+            if text_lower.endswith(ending):
+                return True
+        # Nao termina com pontuacao final
+        if not text.endswith(('.', '!', '?', '"', "'", ')')):
+            return True
+        return False
+
+    merged = []
+    buffer = None
+
+    for seg in segments:
+        if buffer:
+            # Verificar se nao vai ficar muito longo
+            new_duration = seg['end'] - buffer['start']
+
+            if new_duration <= max_duration:
+                # Junta com buffer anterior
+                buffer['text'] = buffer['text'].strip() + ' ' + seg['text'].strip()
+                buffer['end'] = seg['end']
+
+                # Verifica se agora esta completo
+                if not needs_merge(buffer['text']):
+                    merged.append(buffer)
+                    buffer = None
+                # Senao, continua acumulando
+            else:
+                # Muito longo, salva buffer e comeca novo
+                merged.append(buffer)
+                if needs_merge(seg['text']):
+                    buffer = dict(seg)
+                else:
+                    merged.append(seg)
+                    buffer = None
+        else:
+            if needs_merge(seg['text']):
+                buffer = dict(seg)
+            else:
+                merged.append(seg)
+
+    # Nao esquecer o ultimo buffer
+    if buffer:
+        merged.append(buffer)
+
+    return merged
+
 def merge_transcription_with_diarization(transcription_segs, diarization_segs):
     """Combina transcricao com diarizacao para atribuir falante a cada segmento"""
     if not diarization_segs:
@@ -571,6 +651,13 @@ def transcribe_faster_whisper(wav_path, workdir, src_lang, model_size="medium", 
             seg_count += 1
             if seg_count % 50 == 0:
                 print(f"  Processados: {seg_count} segmentos...")
+
+    # Merge de segmentos incompletos (frases cortadas no meio)
+    segs_antes = len(segs)
+    segs = merge_incomplete_segments(segs, max_duration=15.0)
+    segs_depois = len(segs)
+    if segs_antes != segs_depois:
+        print(f"[INFO] Merge de frases incompletas: {segs_antes} -> {segs_depois} segmentos")
 
     # Diarizacao opcional
     if diarize:
