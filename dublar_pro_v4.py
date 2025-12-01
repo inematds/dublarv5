@@ -298,7 +298,7 @@ def is_youtube_url(url):
     return any(re.search(p, str(url)) for p in youtube_patterns)
 
 def download_youtube(url, output_dir):
-    """Baixa video do YouTube usando yt-dlp"""
+    """Baixa video do YouTube usando yt-dlp, mantendo o titulo original"""
     print("\n" + "="*60)
     print("=== Download do YouTube ===")
     print("="*60)
@@ -307,18 +307,28 @@ def download_youtube(url, output_dir):
         print("[ERRO] yt-dlp nao encontrado. Instale com: pip install yt-dlp")
         sys.exit(1)
 
-    output_path = Path(output_dir) / "youtube_video.mp4"
+    # Usar titulo do video como nome do arquivo
+    output_template = str(Path(output_dir) / "%(title)s.%(ext)s")
 
     sh([
         "yt-dlp",
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
-        "-o", str(output_path),
+        "--restrict-filenames",  # Remove caracteres especiais do nome
+        "-o", output_template,
         url
     ])
 
-    print(f"[OK] Video baixado: {output_path}")
-    return output_path
+    # Encontrar o arquivo baixado
+    mp4_files = list(Path(output_dir).glob("*.mp4"))
+    if mp4_files:
+        # Pegar o mais recente
+        output_path = max(mp4_files, key=lambda p: p.stat().st_mtime)
+        print(f"[OK] Video baixado: {output_path}")
+        return output_path
+    else:
+        print("[ERRO] Nenhum arquivo MP4 encontrado apos download")
+        sys.exit(1)
 
 # ============================================================================
 # NORMALIZACAO DE AUDIO SEGURA (v4 - CORRECAO CRITICA)
