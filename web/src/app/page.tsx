@@ -1,0 +1,192 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { getSystemStatus, listJobs } from "@/lib/api";
+
+function StatusCard({ title, value, sub, color = "blue" }: { title: string; value: string; sub?: string; color?: string }) {
+  const colors: Record<string, string> = {
+    blue: "border-blue-500/30 bg-blue-500/5",
+    green: "border-green-500/30 bg-green-500/5",
+    yellow: "border-yellow-500/30 bg-yellow-500/5",
+    red: "border-red-500/30 bg-red-500/5",
+  };
+  return (
+    <div className={`border rounded-lg p-4 ${colors[color] || colors.blue}`}>
+      <div className="text-sm text-gray-400">{title}</div>
+      <div className="text-2xl font-bold mt-1">{value}</div>
+      {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const [system, setSystem] = useState<Record<string, unknown> | null>(null);
+  const [jobs, setJobs] = useState<Record<string, unknown>[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [sys, jbs] = await Promise.all([getSystemStatus(), listJobs()]);
+        setSystem(sys);
+        setJobs(jbs);
+      } catch (e) {
+        setError("API offline. Inicie o backend: uvicorn api.server:app --port 8000");
+      }
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const gpu = (system?.gpu || {}) as Record<string, unknown>;
+  const cpu = (system?.cpu || {}) as Record<string, unknown>;
+  const memory = (system?.memory || {}) as Record<string, unknown>;
+  const disk = (system?.disk || {}) as Record<string, unknown>;
+  const ollama = (system?.ollama || {}) as Record<string, unknown>;
+
+  const activeJobs = jobs.filter((j) => j.status === "running");
+  const completedJobs = jobs.filter((j) => j.status === "completed");
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <p className="text-gray-400 mt-1">Monitor do sistema e jobs de dublagem</p>
+        </div>
+        <a
+          href="/new"
+          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
+        >
+          + Nova Dublagem
+        </a>
+      </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mb-6">
+          <p className="text-red-400">{error}</p>
+        </div>
+      )}
+
+      {/* Status Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <StatusCard
+          title="GPU"
+          value={gpu.available ? String(gpu.name || "NVIDIA") : "Offline"}
+          sub={gpu.temperature_c ? `${gpu.temperature_c}C | ${gpu.power_w}W` : undefined}
+          color={gpu.available ? "green" : "red"}
+        />
+        <StatusCard
+          title="CPU"
+          value={`${cpu.usage_pct || 0}%`}
+          sub={`${cpu.cores || 0} cores`}
+          color={Number(cpu.usage_pct) > 80 ? "red" : "green"}
+        />
+        <StatusCard
+          title="RAM"
+          value={`${memory.usage_pct || 0}%`}
+          sub={`${Math.round(Number(memory.available_mb || 0) / 1024)}GB livre`}
+          color={Number(memory.usage_pct) > 80 ? "yellow" : "green"}
+        />
+        <StatusCard
+          title="Ollama"
+          value={ollama.online ? "Online" : "Offline"}
+          sub={Array.isArray(ollama.running_models) && ollama.running_models.length > 0
+            ? String(ollama.running_models[0])
+            : "Nenhum modelo carregado"}
+          color={ollama.online ? "green" : "red"}
+        />
+      </div>
+
+      {/* Active Jobs */}
+      {activeJobs.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold mb-4">Jobs em Andamento</h2>
+          <div className="space-y-3">
+            {activeJobs.map((job) => {
+              const progress = (job.progress || {}) as Record<string, unknown>;
+              return (
+                <a key={String(job.id)} href={`/jobs/${job.id}`}
+                  className="block border border-blue-500/30 bg-blue-500/5 rounded-lg p-4 hover:bg-blue-500/10 transition-colors">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <span className="font-medium">{String(job.id)}</span>
+                      <span className="text-gray-400 ml-3 text-sm">
+                        {String((job.config as Record<string, unknown>)?.tgt_lang || "pt")} |{" "}
+                        {String((job.config as Record<string, unknown>)?.tts_engine || "edge")}
+                      </span>
+                    </div>
+                    <span className="text-blue-400 font-mono">{String(progress.percent || 0)}%</span>
+                  </div>
+                  <div className="mt-2 bg-gray-800 rounded-full h-2">
+                    <div
+                      className="bg-blue-500 h-2 rounded-full transition-all"
+                      style={{ width: `${progress.percent || 0}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Etapa: {String(progress.stage_name || "...")} ({String(progress.current_stage || 0)}/{String(progress.total_stages || 10)})
+                  </div>
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Recent Jobs */}
+      <div>
+        <h2 className="text-xl font-semibold mb-4">Jobs Recentes</h2>
+        {jobs.length === 0 ? (
+          <div className="border border-gray-800 rounded-lg p-8 text-center text-gray-500">
+            Nenhum job ainda. <a href="/new" className="text-blue-400 hover:underline">Criar nova dublagem</a>
+          </div>
+        ) : (
+          <div className="border border-gray-800 rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-900 text-gray-400">
+                <tr>
+                  <th className="text-left px-4 py-3">ID</th>
+                  <th className="text-left px-4 py-3">Status</th>
+                  <th className="text-left px-4 py-3">Idioma</th>
+                  <th className="text-left px-4 py-3">TTS</th>
+                  <th className="text-left px-4 py-3">Duracao</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.slice(0, 10).map((job) => {
+                  const statusColors: Record<string, string> = {
+                    completed: "text-green-400",
+                    running: "text-blue-400",
+                    failed: "text-red-400",
+                    queued: "text-yellow-400",
+                    cancelled: "text-gray-400",
+                  };
+                  const config = (job.config || {}) as Record<string, unknown>;
+                  return (
+                    <tr key={String(job.id)} className="border-t border-gray-800 hover:bg-gray-900/50">
+                      <td className="px-4 py-3">
+                        <a href={`/jobs/${job.id}`} className="text-blue-400 hover:underline font-mono">
+                          {String(job.id)}
+                        </a>
+                      </td>
+                      <td className={`px-4 py-3 ${statusColors[String(job.status)] || ""}`}>
+                        {String(job.status)}
+                      </td>
+                      <td className="px-4 py-3">
+                        {String(config.src_lang || "auto")} &rarr; {String(config.tgt_lang || "pt")}
+                      </td>
+                      <td className="px-4 py-3">{String(config.tts_engine || "edge")}</td>
+                      <td className="px-4 py-3 text-gray-400">{String(job.duration_s || 0)}s</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

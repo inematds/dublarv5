@@ -2208,6 +2208,257 @@ def sync_smart_advanced(p, target, workdir, sr, tol, maxstretch, use_rubberband=
     else:
         return p
 
+
+def sync_extend_prepare(seg_files, segs_trad, workdir):
+    """Prepara sincronizacao extend - voz natural, video se ajusta
+
+    Faz duas coisas:
+    1. Quando audio > video: registra para criar freeze frame
+    2. Quando audio < video: adiciona padding de silencio ao audio
+
+    Retorna:
+    - seg_files: arquivos de audio (com padding se necessario)
+    - extensions: lista de (timestamp_original, delta) para freeze frames
+    - new_timestamps: timestamps ajustados
+    """
+    extensions = []
+    new_timestamps = []
+    padded_files = []
+    cumulative_delta = 0.0
+    pad_count = 0
+    extend_count = 0
+
+    for i, p in enumerate(seg_files):
+        cur_duration = ffprobe_duration(p)
+        if cur_duration <= 0:
+            cur_duration = 0.5  # fallback
+
+        if i < len(segs_trad):
+            s = segs_trad[i]
+            original_start = s["start"]
+            original_end = s["end"]
+            target_duration = original_end - original_start
+        else:
+            original_start = new_timestamps[-1]["end"] if new_timestamps else 0
+            original_end = original_start + cur_duration
+            target_duration = cur_duration
+
+        # Calcular delta (positivo = voz mais longa, negativo = voz mais curta)
+        delta = cur_duration - target_duration
+
+        if delta < -0.1:  # Audio mais curto - adicionar silencio ao final
+            # Criar arquivo com padding
+            padded_path = Path(workdir) / f"{p.stem}_pad.wav"
+            silence_duration = abs(delta)
+
+            # Usar ffmpeg para adicionar silencio ao final
+            subprocess.run([
+                "ffmpeg", "-y",
+                "-i", str(p),
+                "-af", f"apad=pad_dur={silence_duration}",
+                "-ac", "1", "-ar", "22050",
+                str(padded_path)
+            ], capture_output=True)
+
+            if padded_path.exists():
+                padded_files.append(padded_path)
+                pad_count += 1
+            else:
+                padded_files.append(p)
+
+            # Para audio com padding, nao há delta acumulado (o audio agora casa com o video)
+            new_start = original_start + cumulative_delta
+            new_end = new_start + target_duration  # Usar duracao original (com padding)
+
+        elif delta > 0.1:  # Audio mais longo - registrar para freeze frame
+            padded_files.append(p)
+            extend_count += 1
+
+            extensions.append({
+                "timestamp": original_end + cumulative_delta,  # Timestamp ajustado
+                "duration": delta,
+                "segment": i + 1
+            })
+
+            new_start = original_start + cumulative_delta
+            new_end = new_start + cur_duration
+            cumulative_delta += delta  # Acumular apenas extensoes
+
+        else:  # Delta pequeno, manter como está
+            padded_files.append(p)
+            new_start = original_start + cumulative_delta
+            new_end = new_start + cur_duration
+
+        new_timestamps.append({
+            "start": new_start,
+            "end": new_end,
+            "original_start": original_start,
+            "original_end": original_end,
+            "delta": delta
+        })
+
+    total_extension = sum(e["duration"] for e in extensions)
+    print(f"[INFO] Segmentos com padding de silencio: {pad_count}")
+    print(f"[INFO] Segmentos que estendem video: {extend_count}")
+    print(f"[INFO] Extensao total do video: +{total_extension:.2f}s")
+    print(f"[INFO] {len(extensions)} pontos de freeze frame")
+
+    return padded_files, extensions, new_timestamps
+
+
+def mux_video_extended(video_in, wav_in, out_mp4, bitrate, extensions, workdir):
+    """Combina video com audio, adicionando freeze frames onde necessario"""
+    print("\n" + "="*60)
+    print("=== ETAPA 10: Mux Final (com extensao de video) ===")
+    print("="*60)
+
+    def run_quiet(cmd):
+        """Executa comando ffmpeg silenciosamente"""
+        return subprocess.run(cmd, capture_output=True)
+
+    if not extensions:
+        # Sem extensoes, usar mux normal
+        sh(["ffmpeg", "-y",
+            "-i", str(video_in),
+            "-i", str(wav_in),
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", bitrate,
+            str(out_mp4)])
+        print(f"[OK] Video final: {out_mp4}")
+        return
+
+    # Ordenar extensoes por timestamp
+    extensions = sorted(extensions, key=lambda x: x["timestamp"])
+
+    # Criar segmentos de video com freeze frames
+    segments = []
+    prev_time = 0.0
+    total_ext = len(extensions)
+
+    print(f"[INFO] Criando {total_ext} freeze frames...")
+
+    for i, ext in enumerate(extensions):
+        ts = ext["timestamp"]
+        dur = ext["duration"]
+
+        # Segmento de video normal ate o ponto de freeze
+        if ts > prev_time:
+            seg_video = Path(workdir) / f"vseg_{i:04d}.mp4"
+            run_quiet(["ffmpeg", "-y",
+                "-ss", str(prev_time),
+                "-i", str(video_in),
+                "-t", str(ts - prev_time),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-an",
+                str(seg_video)])
+            if seg_video.exists():
+                segments.append(seg_video)
+
+        # Freeze frame - extrair frame e criar video estatico
+        freeze_img = Path(workdir) / f"freeze_{i:04d}.png"
+        freeze_video = Path(workdir) / f"freeze_{i:04d}.mp4"
+
+        # Extrair frame no ponto do freeze
+        run_quiet(["ffmpeg", "-y",
+            "-ss", str(ts - 0.01),  # Um pouco antes para garantir
+            "-i", str(video_in),
+            "-vframes", "1",
+            str(freeze_img)])
+
+        if freeze_img.exists():
+            # Criar video a partir da imagem estatica
+            run_quiet(["ffmpeg", "-y",
+                "-loop", "1",
+                "-i", str(freeze_img),
+                "-t", str(dur),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-pix_fmt", "yuv420p",
+                "-r", "30",
+                str(freeze_video)])
+
+            if freeze_video.exists():
+                segments.append(freeze_video)
+
+        prev_time = ts
+
+        # Progresso
+        if (i + 1) % 5 == 0 or i == total_ext - 1:
+            print(f"    Progresso: {i+1}/{total_ext}")
+
+    # Ultimo segmento ate o fim do video
+    video_duration = ffprobe_duration(video_in)
+    if prev_time < video_duration:
+        seg_video = Path(workdir) / f"vseg_final.mp4"
+        run_quiet(["ffmpeg", "-y",
+            "-ss", str(prev_time),
+            "-i", str(video_in),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-an",
+            str(seg_video)])
+        if seg_video.exists():
+            segments.append(seg_video)
+
+    if not segments:
+        print("[WARN] Nenhum segmento criado, usando mux normal")
+        sh(["ffmpeg", "-y",
+            "-i", str(video_in),
+            "-i", str(wav_in),
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", bitrate,
+            str(out_mp4)])
+        print(f"[OK] Video final: {out_mp4}")
+        return
+
+    print(f"[INFO] Concatenando {len(segments)} segmentos de video...")
+
+    # Criar lista de concatenacao
+    concat_list = Path(workdir) / "video_concat.txt"
+    with open(concat_list, "w") as f:
+        for seg in segments:
+            f.write(f"file '{seg.name}'\n")
+
+    # Concatenar segmentos de video
+    video_extended = Path(workdir) / "video_extended.mp4"
+    run_quiet(["ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", str(concat_list),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        str(video_extended)])
+
+    # Mux final com audio
+    if video_extended.exists():
+        print("[INFO] Mixando audio com video estendido...")
+        sh(["ffmpeg", "-y",
+            "-i", str(video_extended),
+            "-i", str(wav_in),
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", bitrate,
+            "-shortest",
+            str(out_mp4)])
+        print(f"[OK] Video final (estendido): {out_mp4}")
+    else:
+        print("[WARN] Falha ao criar video estendido, usando mux normal")
+        sh(["ffmpeg", "-y",
+            "-i", str(video_in),
+            "-i", str(wav_in),
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", bitrate,
+            str(out_mp4)])
+        print(f"[OK] Video final: {out_mp4}")
+
+
 # ============================================================================
 # ETAPA 8: CONCATENACAO
 # ============================================================================
@@ -2442,8 +2693,8 @@ Exemplos:
     ap.add_argument("--num-speakers", type=int, default=None, help="Numero de falantes (auto se nao especificado)")
 
     # Sincronizacao
-    ap.add_argument("--sync", choices=["none", "fit", "pad", "smart"], default="smart",
-                   help="Modo de sincronizacao")
+    ap.add_argument("--sync", choices=["none", "fit", "pad", "smart", "extend"], default="smart",
+                   help="Modo de sincronizacao (extend=voz natural, video estende com freeze frames)")
     ap.add_argument("--tolerance", type=float, default=0.1, help="Tolerancia sync")
     ap.add_argument("--maxstretch", type=float, default=1.3, help="Max compressao (1.3=30%)")
     ap.add_argument("--no-rubberband", action="store_true", help="Desabilitar rubberband (usar ffmpeg atempo)")
@@ -2668,8 +2919,16 @@ Exemplos:
         elif args.sync == "smart":
             fixed.append(sync_smart_advanced(p, target, workdir, sr_segs,
                                             args.tolerance, args.maxstretch, use_rb))
+        elif args.sync == "extend":
+            # Modo extend: nao modifica audio, guarda para estender video depois
+            fixed.append(p)
 
-    seg_files = fixed
+    # Para modo extend, calcular extensoes necessarias
+    video_extensions = []
+    if args.sync == "extend":
+        seg_files, video_extensions, _ = sync_extend_prepare(seg_files, segs_trad, workdir)
+    else:
+        seg_files = fixed
     save_checkpoint(workdir, 7, "sync")
     tempos_etapas["7_sync"] = time.time() - t_etapa
 
@@ -2687,7 +2946,10 @@ Exemplos:
 
     # ========== ETAPA 10: Mux ==========
     t_etapa = time.time()
-    mux_video(video_in, dub_final, out_mp4, args.bitrate)
+    if args.sync == "extend" and video_extensions:
+        mux_video_extended(video_in, dub_final, out_mp4, args.bitrate, video_extensions, workdir)
+    else:
+        mux_video(video_in, dub_final, out_mp4, args.bitrate)
     save_checkpoint(workdir, 10, "mux")
     tempos_etapas["10_mux"] = time.time() - t_etapa
 
