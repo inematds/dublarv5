@@ -215,13 +215,57 @@ def check_yt_dlp():
     """Verifica se yt-dlp esta disponivel"""
     return shutil.which("yt-dlp") is not None
 
-def check_ollama():
-    """Verifica se Ollama esta rodando"""
+def check_ollama(model=None):
+    """Verifica se Ollama esta rodando e (opcionalmente) se o modelo existe"""
     try:
         import httpx
         r = httpx.get("http://localhost:11434/api/tags", timeout=5)
-        return r.status_code == 200
+        if r.status_code != 200:
+            return False
+        if model:
+            models = [m["name"] for m in r.json().get("models", [])]
+            # Aceitar match parcial (ex: "qwen-agentic:latest" match "qwen-agentic")
+            found = any(model == m or model == m.split(":")[0] for m in models)
+            if not found:
+                print(f"[WARN] Ollama rodando mas modelo '{model}' nao encontrado")
+                print(f"[INFO] Modelos disponiveis: {', '.join(models)}")
+                return False
+        return True
     except:
+        return False
+
+
+def warmup_ollama(model):
+    """Pre-aquece modelo no Ollama (carrega na VRAM). Retorna True se ok."""
+    import httpx
+    try:
+        print(f"[INFO] Pre-aquecendo modelo {model} no Ollama...")
+        # Verifica se ja esta carregado
+        r = httpx.get("http://localhost:11434/api/ps", timeout=5)
+        if r.status_code == 200:
+            loaded = [m["name"] for m in r.json().get("models", [])]
+            if any(model == m or model == m.split(":")[0] for m in loaded):
+                print(f"[OK] Modelo {model} ja esta carregado na memoria")
+                return True
+
+        # Envia request minimo para forcar carregamento (timeout longo: 5 min)
+        print(f"[INFO] Carregando {model} na GPU (pode levar 1-2 min)...")
+        r = httpx.post(
+            "http://localhost:11434/api/generate",
+            json={"model": model, "prompt": "hi", "stream": False,
+                  "options": {"num_predict": 1}},
+            timeout=300
+        )
+        if r.status_code == 200:
+            data = r.json()
+            dur = data.get("total_duration", 0) / 1e9
+            print(f"[OK] Modelo {model} pronto ({dur:.1f}s para carregar)")
+            return True
+        else:
+            print(f"[WARN] Warmup falhou: HTTP {r.status_code}")
+            return False
+    except Exception as e:
+        print(f"[WARN] Warmup falhou: {e}")
         return False
 
 def check_xtts():
@@ -1272,7 +1316,7 @@ def _clean_ollama_response(response, original_text):
 
 def translate_ollama_with_context(text, src_lang, tgt_lang, model="llama3",
                                    previous_segments=None, target_duration=None,
-                                   cps_original=None):
+                                   cps_original=None, timeout=120):
     """Traduz texto usando Ollama COM CONTEXTO dos segmentos anteriores
 
     FASE 2: Contexto na traducao - passa segmentos anteriores para manter consistencia
@@ -1335,7 +1379,7 @@ Concise translation (max {max_chars} chars):"""
                     "num_predict": max_chars + 50,  # Limitar tokens gerados
                 }
             },
-            timeout=60
+            timeout=timeout
         )
 
         if response.status_code == 200:
@@ -1381,13 +1425,19 @@ def translate_segments_ollama(segs, src, tgt, workdir, model="llama3", cps_origi
     print(f"=== ETAPA 4: Traducao (Ollama - {model}) ===")
     print("="*60)
 
-    if not check_ollama():
-        print("[WARN] Ollama nao esta rodando. Fallback para M2M100.")
+    if not check_ollama(model=model):
+        print("[WARN] Ollama nao esta rodando ou modelo indisponivel. Fallback para M2M100.")
+        return None
+
+    # Pre-aquecer modelo (carrega na GPU antes de iniciar traducao)
+    if not warmup_ollama(model):
+        print("[WARN] Falha no warmup do Ollama. Fallback para M2M100.")
         return None
 
     out = []
     previous_segments = []
     fallback_count = 0
+    consecutive_failures = 0
 
     # Preparar M2M100 para fallback (carrega sob demanda)
     m2m_tok = None
@@ -1406,15 +1456,18 @@ def translate_segments_ollama(segs, src, tgt, workdir, model="llama3", cps_origi
         # Proteger termos tecnicos
         texto_protegido, mapa = proteger_termos_tecnicos(texto_limpo)
 
-        # Traduzir via Ollama COM CONTEXTO
-        translated = translate_ollama_with_context(
-            texto_protegido, src, tgt, model,
-            previous_segments=previous_segments,
-            target_duration=duracao_seg,
-            cps_original=cps_original
-        )
+        # Traduzir via Ollama COM CONTEXTO (skip se muitas falhas consecutivas)
+        translated = None
+        if consecutive_failures < 5:
+            translated = translate_ollama_with_context(
+                texto_protegido, src, tgt, model,
+                previous_segments=previous_segments,
+                target_duration=duracao_seg,
+                cps_original=cps_original
+            )
 
         if translated:
+            consecutive_failures = 0
             txt_restaurado = restaurar_termos_tecnicos(translated, mapa)
             txt_corrigido = aplicar_correcoes(txt_restaurado)
             txt_final = aplicar_glossario(txt_corrigido, src, tgt)
@@ -1425,6 +1478,9 @@ def translate_segments_ollama(segs, src, tgt, workdir, model="llama3", cps_origi
         else:
             # Fallback: usar M2M100 para este segmento
             fallback_count += 1
+            consecutive_failures += 1
+            if consecutive_failures == 5:
+                print(f"  [WARN] 5 falhas consecutivas no Ollama - usando M2M100 para restante")
             if m2m_tok is None:
                 print(f"  [WARN] Seg {i+1}: Ollama falhou, carregando M2M100 para fallback...")
                 try:
@@ -2960,7 +3016,17 @@ Exemplos:
     if args.clonar_voz:
         voice_sample = extract_voice_sample(audio_src, workdir)
 
-    save_checkpoint(workdir, 2, "extraction")
+    # Obter duracao do video/audio
+    video_duration_s = 0
+    try:
+        import subprocess as _sp
+        probe = _sp.run(["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                         "-of", "csv=p=0", str(audio_src)], capture_output=True, text=True, timeout=10)
+        video_duration_s = round(float(probe.stdout.strip()), 1)
+        print(f"[INFO] Duracao do video: {int(video_duration_s//60)}m{int(video_duration_s%60)}s")
+    except Exception:
+        pass
+    save_checkpoint(workdir, 2, "extraction", {"video_duration_s": video_duration_s})
     tempos_etapas["1-2_extracao"] = time.time() - t_etapa
 
     # ========== ETAPA 3: Transcricao ==========
