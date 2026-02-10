@@ -243,6 +243,11 @@ class JobManager:
                         pass
                 # Determinar status pelo que existe no disco
                 checkpoint = job._read_checkpoint()
+                # Sincronizar _last_stage_num com checkpoint para evitar
+                # que _calc_progress recalcule e sobrescreva stage_times
+                if checkpoint.get("last_step_num"):
+                    job._last_stage_num = checkpoint["last_step_num"]
+
                 dublado_dir = job_dir / "dublado"
                 has_output = dublado_dir.exists() and any(dublado_dir.glob("*.mp4"))
                 log_path = job_dir / "output.log"
