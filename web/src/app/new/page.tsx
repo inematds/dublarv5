@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getOptions, createJob, getOllamaStatus, startOllama, stopOllama, pullOllamaModel } from "@/lib/api";
+import { getOptions, createJob, createJobWithUpload, getOllamaStatus, startOllama, stopOllama, pullOllamaModel } from "@/lib/api";
 
 type Options = {
   tts_engines: { id: string; name: string; needs_gpu: boolean; needs_internet: boolean; quality?: string; description?: string; detail?: string }[];
@@ -95,6 +95,7 @@ export default function NewJob() {
 
   // Form state
   const [input, setInput] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [srcLang, setSrcLang] = useState("");
   const [tgtLang, setTgtLang] = useState("pt");
   const [contentType, setContentType] = useState("palestra");
@@ -185,7 +186,7 @@ export default function NewJob() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input) return;
+    if (!input && !uploadFile) return;
     setLoading(true);
     setError(null);
 
@@ -194,7 +195,7 @@ export default function NewJob() {
       const tolerance = ct?.presets?.tolerance;
 
       const config: Record<string, unknown> = {
-        input,
+        input: uploadFile ? uploadFile.name : input,
         tgt_lang: tgtLang,
         tts_engine: ttsEngine,
         asr_engine: asrEngine,
@@ -215,7 +216,9 @@ export default function NewJob() {
       if (cloneVoice) config.clone_voice = true;
       if (tolerance !== undefined) config.tolerance = Number(tolerance);
 
-      const job = await createJob(config);
+      const job = uploadFile
+        ? await createJobWithUpload(uploadFile, config)
+        : await createJob(config);
       router.push(`/jobs/${job.id}`);
     } catch (err) {
       setError(String(err));
@@ -243,11 +246,31 @@ export default function NewJob() {
           <input
             type="text"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="URL do YouTube ou caminho do arquivo local"
+            onChange={(e) => { setInput(e.target.value); setUploadFile(null); }}
+            placeholder="URL do YouTube"
             className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-            required
+            disabled={!!uploadFile}
+            required={!uploadFile}
           />
+          <div className="mt-3 flex items-center gap-3">
+            <span className="text-sm text-gray-500">ou</span>
+            <label className="cursor-pointer bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-sm text-gray-300 transition-colors">
+              {uploadFile ? uploadFile.name : "Enviar arquivo de video"}
+              <input
+                type="file"
+                accept="video/*,audio/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) { setUploadFile(f); setInput(""); }
+                }}
+              />
+            </label>
+            {uploadFile && (
+              <button type="button" onClick={() => setUploadFile(null)}
+                className="text-sm text-red-400 hover:text-red-300">Remover</button>
+            )}
+          </div>
         </section>
 
         {/* Idiomas */}

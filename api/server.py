@@ -126,10 +126,13 @@ async def create_job_with_upload(
 ):
     """Criar job com upload de video."""
     import json
+    import uuid
     config = json.loads(config_json)
 
-    # Salvar arquivo
-    upload_path = UPLOAD_DIR / f"{file.filename}"
+    # Salvar arquivo com nome unico para evitar conflitos
+    suffix = Path(file.filename).suffix or ".mp4"
+    safe_name = f"{uuid.uuid4().hex[:8]}_{Path(file.filename).stem}{suffix}"
+    upload_path = UPLOAD_DIR / safe_name
     with open(upload_path, "wb") as f:
         content = await file.read()
         f.write(content)

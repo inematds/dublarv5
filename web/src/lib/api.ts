@@ -46,6 +46,21 @@ export async function createJob(config: Record<string, unknown>) {
   return fetchApi("/api/jobs", { method: "POST", body: JSON.stringify(config) });
 }
 
+export async function createJobWithUpload(file: File, config: Record<string, unknown>) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("config_json", JSON.stringify(config));
+  const res = await fetch(`${API_BASE}/api/jobs/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function listJobs() {
   return fetchApi("/api/jobs");
 }
