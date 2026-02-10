@@ -262,17 +262,34 @@ export default function JobDetail() {
       {/* Config */}
       <section className="border border-gray-800 rounded-lg p-5 mb-6">
         <h2 className="text-lg font-semibold mb-3">Configuracao</h2>
+        <div className="text-sm mb-3">
+          <span className="text-gray-500">Input:</span> <span className="text-gray-300 break-all">{String(config.input || "-")}</span>
+        </div>
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <div><span className="text-gray-500">Input:</span> <span className="text-gray-300 break-all">{String(config.input || "-")}</span></div>
           <div><span className="text-gray-500">Idiomas:</span> {String(config.src_lang || "auto")} → {String(config.tgt_lang || "pt")}</div>
-          <div><span className="text-gray-500">TTS:</span> {String(config.tts_engine || "edge")}</div>
-          <div><span className="text-gray-500">Traducao:</span> {String(config.translation_engine || "m2m100")}</div>
-          <div><span className="text-gray-500">Whisper:</span> {String(config.whisper_model || "large-v3")}</div>
-          <div><span className="text-gray-500">Sync:</span> {String(config.sync_mode || "smart")}</div>
-          <div><span className="text-gray-500">Device:</span> <span className={device === "cuda" ? "text-green-400" : "text-yellow-400"}>{device.toUpperCase()}</span></div>
           <div><span className="text-gray-500">Tipo:</span> {String(config.content_type || "palestra")}</div>
+          <div><span className="text-gray-500">ASR:</span> {String(config.asr_engine || "whisper")}</div>
+          <div>
+            <span className="text-gray-500">
+              {String(config.asr_engine) === "parakeet" ? "Modelo Parakeet:" : "Modelo Whisper:"}
+            </span>{" "}
+            {String(config.asr_engine) === "parakeet"
+              ? String(config.parakeet_model || "nvidia/parakeet-tdt-1.1b").split("/").pop()
+              : String(config.whisper_model || "large-v3")}
+          </div>
+          <div><span className="text-gray-500">TTS:</span> {String(config.tts_engine || "edge")}</div>
           {!!config.voice && <div><span className="text-gray-500">Voz:</span> {String(config.voice)}</div>}
-          {!!config.ollama_model && <div><span className="text-gray-500">Ollama:</span> {String(config.ollama_model)}</div>}
+          <div><span className="text-gray-500">Traducao:</span> {String(config.translation_engine || "m2m100")}</div>
+          {!!config.ollama_model && <div><span className="text-gray-500">Modelo Ollama:</span> {String(config.ollama_model)}</div>}
+          {!!config.large_model && <div><span className="text-gray-500">M2M100:</span> 1.2B (grande)</div>}
+          <div><span className="text-gray-500">Sync:</span> {String(config.sync_mode || "smart")}</div>
+          <div><span className="text-gray-500">Max Stretch:</span> {String(config.maxstretch || "1.3")}x</div>
+          {!!config.tolerance && <div><span className="text-gray-500">Tolerancia:</span> {String(config.tolerance)}</div>}
+          <div><span className="text-gray-500">Device:</span> <span className={device === "cuda" ? "text-green-400" : "text-yellow-400"}>{device.toUpperCase()}</span></div>
+          <div><span className="text-gray-500">Seed:</span> {String(config.seed ?? "-")}</div>
+          {!!config.no_truncate && <div><span className="text-green-400">Frases completas (sem corte)</span></div>}
+          {!!config.diarize && <div><span className="text-purple-400">Multi-falante (diarizacao)</span></div>}
+          {!!config.clone_voice && <div><span className="text-blue-400">Clonar voz original</span></div>}
         </div>
       </section>
 

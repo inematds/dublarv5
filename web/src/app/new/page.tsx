@@ -117,6 +117,18 @@ export default function NewJob() {
   // UI state
   const [expandedDetail, setExpandedDetail] = useState<string | null>(null);
   const [expandedHelp, setExpandedHelp] = useState<string | null>(null);
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
+
+  const toggleSection = (section: string) => {
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(section)) next.delete(section); else next.add(section);
+      return next;
+    });
+  };
+  const closeSection = (section: string) => {
+    setOpenSections((prev) => { const next = new Set(prev); next.delete(section); return next; });
+  };
 
   useEffect(() => {
     getOptions().then(setOptions).catch(() => setError("API offline"));
@@ -235,32 +247,44 @@ export default function NewJob() {
         {/* Tipo de Conteudo */}
         <section className="border border-gray-800 rounded-lg p-5">
           <h2 className="text-lg font-semibold mb-4">Tipo de Conteudo</h2>
-          <div className="space-y-3">
-            {options?.content_types.map((ct) => (
-              <div key={ct.id}>
-                <DetailCard
-                  id={`ct_${ct.id}`}
-                  name={ct.name}
-                  description={ct.description}
-                  detail={ct.detail}
-                  selected={contentType === ct.id}
-                  onSelect={() => setContentType(ct.id)}
-                  expandedDetail={expandedDetail}
-                  setExpandedDetail={setExpandedDetail}
-                  badges={
-                    expandedDetail === `ct_${ct.id}` ? (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {ct.presets.sync && <span className="text-xs bg-gray-700/50 px-2 py-0.5 rounded">sync: {String(ct.presets.sync)}</span>}
-                        {ct.presets.maxstretch && <span className="text-xs bg-gray-700/50 px-2 py-0.5 rounded">compressao: {String(Number(ct.presets.maxstretch) * 100 - 100)}%</span>}
-                        {ct.presets.no_truncate && <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">frases completas</span>}
-                        {ct.presets.diarize && <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">multi-falante</span>}
-                      </div>
-                    ) : undefined
-                  }
-                />
+          {openSections.has("ct") ? (
+            <div className="space-y-3">
+              {options?.content_types.map((ct) => (
+                <div key={ct.id}>
+                  <DetailCard
+                    id={`ct_${ct.id}`}
+                    name={ct.name}
+                    description={ct.description}
+                    detail={ct.detail}
+                    selected={contentType === ct.id}
+                    onSelect={() => { setContentType(ct.id); closeSection("ct"); }}
+                    expandedDetail={expandedDetail}
+                    setExpandedDetail={setExpandedDetail}
+                    badges={
+                      expandedDetail === `ct_${ct.id}` ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {ct.presets.sync && <span className="text-xs bg-gray-700/50 px-2 py-0.5 rounded">sync: {String(ct.presets.sync)}</span>}
+                          {ct.presets.maxstretch && <span className="text-xs bg-gray-700/50 px-2 py-0.5 rounded">compressao: {String(Number(ct.presets.maxstretch) * 100 - 100)}%</span>}
+                          {ct.presets.no_truncate && <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">frases completas</span>}
+                          {ct.presets.diarize && <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">multi-falante</span>}
+                        </div>
+                      ) : undefined
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <button type="button" onClick={() => toggleSection("ct")}
+              className="w-full flex items-center gap-3 p-3 rounded-lg border border-blue-500 bg-blue-500/10 text-left hover:bg-blue-500/15 transition-colors">
+              <span className="text-blue-400">&#9654;</span>
+              <div className="flex-1">
+                <div className="font-medium">{options?.content_types.find((c) => c.id === contentType)?.name || contentType}</div>
+                <div className="text-sm text-gray-400">{options?.content_types.find((c) => c.id === contentType)?.description}</div>
               </div>
-            ))}
-          </div>
+              <span className="text-xs text-gray-500">Alterar</span>
+            </button>
+          )}
         </section>
 
         {/* Motores */}
@@ -270,35 +294,47 @@ export default function NewJob() {
           {/* ASR Engine */}
           <div className="mb-5">
             <label className="block text-sm text-gray-400 mb-2">Transcricao (ASR)</label>
-            <div className="space-y-2">
-              {options?.asr_engines?.map((asr) => {
-                const isLangUnsupported = Array.isArray(asr.supports_languages)
-                  && srcLang
-                  && !asr.supports_languages.includes(srcLang);
-                return (
-                  <DetailCard
-                    key={asr.id}
-                    id={`asr_${asr.id}`}
-                    name={asr.name}
-                    description={asr.description}
-                    detail={asr.detail}
-                    selected={asrEngine === asr.id}
-                    onSelect={() => setAsrEngine(asr.id)}
-                    expandedDetail={expandedDetail}
-                    setExpandedDetail={setExpandedDetail}
-                    disabled={!!isLangUnsupported}
-                    badges={
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {asr.needs_gpu && <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">Requer GPU</span>}
-                        {asr.supports_languages === "all"
-                          ? <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">99+ idiomas</span>
-                          : <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">Apenas ingles</span>}
-                      </div>
-                    }
-                  />
-                );
-              })}
-            </div>
+            {openSections.has("asr") ? (
+              <div className="space-y-2">
+                {options?.asr_engines?.map((asr) => {
+                  const isLangUnsupported = Array.isArray(asr.supports_languages)
+                    && srcLang
+                    && !asr.supports_languages.includes(srcLang);
+                  return (
+                    <DetailCard
+                      key={asr.id}
+                      id={`asr_${asr.id}`}
+                      name={asr.name}
+                      description={asr.description}
+                      detail={asr.detail}
+                      selected={asrEngine === asr.id}
+                      onSelect={() => { setAsrEngine(asr.id); closeSection("asr"); }}
+                      expandedDetail={expandedDetail}
+                      setExpandedDetail={setExpandedDetail}
+                      disabled={!!isLangUnsupported}
+                      badges={
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {asr.needs_gpu && <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">Requer GPU</span>}
+                          {asr.supports_languages === "all"
+                            ? <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">99+ idiomas</span>
+                            : <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">Apenas ingles</span>}
+                        </div>
+                      }
+                    />
+                  );
+                })}
+              </div>
+            ) : (
+              <button type="button" onClick={() => toggleSection("asr")}
+                className="w-full flex items-center gap-3 p-3 rounded-lg border border-blue-500 bg-blue-500/10 text-left hover:bg-blue-500/15 transition-colors">
+                <span className="text-blue-400">&#9654;</span>
+                <div className="flex-1">
+                  <div className="font-medium">{options?.asr_engines?.find((a) => a.id === asrEngine)?.name || asrEngine}</div>
+                  <div className="text-sm text-gray-400">{options?.asr_engines?.find((a) => a.id === asrEngine)?.description}</div>
+                </div>
+                <span className="text-xs text-gray-500">Alterar</span>
+              </button>
+            )}
 
             {/* Parakeet + non-English warning */}
             {asrEngine === "parakeet" && srcLang && srcLang !== "en" && (
@@ -344,30 +380,42 @@ export default function NewJob() {
           {/* TTS */}
           <div className="mb-4">
             <label className="block text-sm text-gray-400 mb-2">Motor TTS (Voz)</label>
-            <div className="space-y-2">
-              {options?.tts_engines.map((te) => (
-                <DetailCard
-                  key={te.id}
-                  id={`tts_${te.id}`}
-                  name={te.name}
-                  description={te.description || ""}
-                  detail={te.detail}
-                  selected={ttsEngine === te.id}
-                  onSelect={() => { setTtsEngine(te.id); setVoice(""); }}
-                  expandedDetail={expandedDetail}
-                  setExpandedDetail={setExpandedDetail}
-                  badges={
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {te.needs_gpu && <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">GPU</span>}
-                      {!te.needs_gpu && <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">CPU</span>}
-                      {te.needs_internet && <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">Online</span>}
-                      {!te.needs_internet && <span className="text-xs bg-gray-500/20 text-gray-400 px-2 py-0.5 rounded">Offline</span>}
-                      {te.quality && <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">{te.quality}</span>}
-                    </div>
-                  }
-                />
-              ))}
-            </div>
+            {openSections.has("tts") ? (
+              <div className="space-y-2">
+                {options?.tts_engines.map((te) => (
+                  <DetailCard
+                    key={te.id}
+                    id={`tts_${te.id}`}
+                    name={te.name}
+                    description={te.description || ""}
+                    detail={te.detail}
+                    selected={ttsEngine === te.id}
+                    onSelect={() => { setTtsEngine(te.id); setVoice(""); closeSection("tts"); }}
+                    expandedDetail={expandedDetail}
+                    setExpandedDetail={setExpandedDetail}
+                    badges={
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {te.needs_gpu && <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">GPU</span>}
+                        {!te.needs_gpu && <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">CPU</span>}
+                        {te.needs_internet && <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">Online</span>}
+                        {!te.needs_internet && <span className="text-xs bg-gray-500/20 text-gray-400 px-2 py-0.5 rounded">Offline</span>}
+                        {te.quality && <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">{te.quality}</span>}
+                      </div>
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <button type="button" onClick={() => toggleSection("tts")}
+                className="w-full flex items-center gap-3 p-3 rounded-lg border border-blue-500 bg-blue-500/10 text-left hover:bg-blue-500/15 transition-colors">
+                <span className="text-blue-400">&#9654;</span>
+                <div className="flex-1">
+                  <div className="font-medium">{options?.tts_engines.find((t) => t.id === ttsEngine)?.name || ttsEngine}</div>
+                  <div className="text-sm text-gray-400">{options?.tts_engines.find((t) => t.id === ttsEngine)?.description}</div>
+                </div>
+                <span className="text-xs text-gray-500">Alterar</span>
+              </button>
+            )}
           </div>
 
           {/* Voz */}
@@ -403,27 +451,39 @@ export default function NewJob() {
           {/* Traducao */}
           <div className="mb-4">
             <label className="block text-sm text-gray-400 mb-2">Motor de Traducao</label>
-            <div className="space-y-2">
-              {options?.translation_engines.map((te) => (
-                <DetailCard
-                  key={te.id}
-                  id={`trad_${te.id}`}
-                  name={te.name}
-                  description={te.description || ""}
-                  detail={te.detail}
-                  selected={translationEngine === te.id}
-                  onSelect={() => setTranslationEngine(te.id)}
-                  expandedDetail={expandedDetail}
-                  setExpandedDetail={setExpandedDetail}
-                  badges={
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {te.needs_gpu && <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">Requer GPU</span>}
-                      {!te.needs_gpu && <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">CPU</span>}
-                    </div>
-                  }
-                />
-              ))}
-            </div>
+            {openSections.has("trad") ? (
+              <div className="space-y-2">
+                {options?.translation_engines.map((te) => (
+                  <DetailCard
+                    key={te.id}
+                    id={`trad_${te.id}`}
+                    name={te.name}
+                    description={te.description || ""}
+                    detail={te.detail}
+                    selected={translationEngine === te.id}
+                    onSelect={() => { setTranslationEngine(te.id); closeSection("trad"); }}
+                    expandedDetail={expandedDetail}
+                    setExpandedDetail={setExpandedDetail}
+                    badges={
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {te.needs_gpu && <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">Requer GPU</span>}
+                        {!te.needs_gpu && <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">CPU</span>}
+                      </div>
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <button type="button" onClick={() => toggleSection("trad")}
+                className="w-full flex items-center gap-3 p-3 rounded-lg border border-blue-500 bg-blue-500/10 text-left hover:bg-blue-500/15 transition-colors">
+                <span className="text-blue-400">&#9654;</span>
+                <div className="flex-1">
+                  <div className="font-medium">{options?.translation_engines.find((t) => t.id === translationEngine)?.name || translationEngine}</div>
+                  <div className="text-sm text-gray-400">{options?.translation_engines.find((t) => t.id === translationEngine)?.description}</div>
+                </div>
+                <span className="text-xs text-gray-500">Alterar</span>
+              </button>
+            )}
           </div>
 
           {/* Modelo Ollama */}
