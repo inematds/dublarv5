@@ -119,6 +119,7 @@ export default function NewJob() {
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [ollamaPulling, setOllamaPulling] = useState(false);
   const [pullModelName, setPullModelName] = useState("qwen2.5:72b");
+  const [ollamaSort, setOllamaSort] = useState<"size" | "name">("size");
 
   // UI state
   const [expandedDetail, setExpandedDetail] = useState<string | null>(null);
@@ -552,13 +553,44 @@ export default function NewJob() {
               {/* Modelo selecionado */}
               {ollamaOnline && options?.ollama_models && options.ollama_models.length > 0 && (
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">Modelo</label>
-                  <select value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
-                    {options.ollama_models.map((m) => (
-                      <option key={m.id} value={m.id}>{m.name} ({m.size_gb}GB)</option>
-                    ))}
-                  </select>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm text-gray-400">Modelo</label>
+                    <div className="flex gap-1">
+                      <button type="button" onClick={() => setOllamaSort("size")}
+                        className={`px-2 py-0.5 rounded text-xs transition-colors ${ollamaSort === "size" ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
+                        Tamanho
+                      </button>
+                      <button type="button" onClick={() => setOllamaSort("name")}
+                        className={`px-2 py-0.5 rounded text-xs transition-colors ${ollamaSort === "name" ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
+                        A-Z
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                    {[...options.ollama_models]
+                      .sort((a, b) => ollamaSort === "size" ? b.size_gb - a.size_gb : a.name.localeCompare(b.name))
+                      .map((m) => {
+                        const selected = ollamaModel === m.id;
+                        const family = m.name.split(":")[0];
+                        const variant = m.name.split(":")[1] || "";
+                        const sizeColor = m.size_gb >= 30 ? "text-purple-400" : m.size_gb >= 10 ? "text-blue-400" : m.size_gb >= 5 ? "text-green-400" : "text-gray-400";
+                        return (
+                          <button type="button" key={m.id} onClick={() => setOllamaModel(m.id)}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                              selected
+                                ? "bg-blue-500/15 border border-blue-500/40 text-white"
+                                : "bg-gray-900 border border-gray-700/50 text-gray-300 hover:border-gray-600"
+                            }`}>
+                            <div className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${selected ? "border-blue-400 bg-blue-400" : "border-gray-600"}`} />
+                            <div className="flex-1 min-w-0">
+                              <span className="font-medium">{family}</span>
+                              {variant && <span className="text-gray-500 ml-1">:{variant}</span>}
+                            </div>
+                            <span className={`font-mono text-xs flex-shrink-0 ${sizeColor}`}>{m.size_gb}GB</span>
+                          </button>
+                        );
+                      })}
+                  </div>
                 </div>
               )}
 
