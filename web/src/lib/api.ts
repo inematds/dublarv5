@@ -26,6 +26,22 @@ export async function getOllamaModels() {
   return fetchApi("/api/models/ollama");
 }
 
+export async function getOllamaStatus() {
+  return fetchApi("/api/ollama/status");
+}
+
+export async function startOllama() {
+  return fetchApi("/api/ollama/start", { method: "POST" });
+}
+
+export async function stopOllama() {
+  return fetchApi("/api/ollama/stop", { method: "POST" });
+}
+
+export async function pullOllamaModel(model: string) {
+  return fetchApi("/api/ollama/pull", { method: "POST", body: JSON.stringify({ model }) });
+}
+
 export async function createJob(config: Record<string, unknown>) {
   return fetchApi("/api/jobs", { method: "POST", body: JSON.stringify(config) });
 }

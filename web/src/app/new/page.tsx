@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getOptions, createJob } from "@/lib/api";
+import { getOptions, createJob, getOllamaStatus, startOllama, stopOllama, pullOllamaModel } from "@/lib/api";
 
 type Options = {
   tts_engines: { id: string; name: string; needs_gpu: boolean; needs_internet: boolean; quality?: string; description?: string; detail?: string }[];
@@ -114,6 +114,12 @@ export default function NewJob() {
   const [maxstretch, setMaxstretch] = useState(1.3);
   const [seed, setSeed] = useState(42);
 
+  // Ollama control
+  const [ollamaOnline, setOllamaOnline] = useState<boolean | null>(null);
+  const [ollamaLoading, setOllamaLoading] = useState(false);
+  const [ollamaPulling, setOllamaPulling] = useState(false);
+  const [pullModelName, setPullModelName] = useState("qwen2.5:72b");
+
   // UI state
   const [expandedDetail, setExpandedDetail] = useState<string | null>(null);
   const [expandedHelp, setExpandedHelp] = useState<string | null>(null);
@@ -133,6 +139,27 @@ export default function NewJob() {
   useEffect(() => {
     getOptions().then(setOptions).catch(() => setError("API offline"));
   }, []);
+
+  // Verificar status do Ollama quando motor de traducao for ollama
+  const refreshOllamaStatus = async () => {
+    try {
+      const st = await getOllamaStatus();
+      setOllamaOnline(st.online);
+      if (st.online && st.models) {
+        setOptions((prev) => prev ? { ...prev, ollama_models: st.models } : prev);
+      }
+    } catch {
+      setOllamaOnline(false);
+    }
+  };
+
+  useEffect(() => {
+    if (translationEngine === "ollama") {
+      refreshOllamaStatus();
+      const interval = setInterval(refreshOllamaStatus, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [translationEngine]);
 
   // Aplicar presets do tipo de conteudo
   useEffect(() => {
@@ -486,23 +513,97 @@ export default function NewJob() {
             )}
           </div>
 
-          {/* Modelo Ollama */}
+          {/* Painel Ollama */}
           {translationEngine === "ollama" && (
-            <div className="mb-4">
-              <label className="block text-sm text-gray-400 mb-1">Modelo Ollama</label>
-              {options?.ollama_models && options.ollama_models.length > 0 ? (
-                <select value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)}
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
-                  {options.ollama_models.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name} ({m.size_gb}GB)</option>
-                  ))}
-                </select>
-              ) : (
-                <div className="text-sm text-yellow-400 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
-                  Ollama offline ou sem modelos instalados. Inicie o Ollama e baixe um modelo:
-                  <code className="block mt-2 text-xs text-gray-300 bg-gray-900 rounded p-2">
-                    ollama pull qwen2.5:14b
-                  </code>
+            <div className="mb-4 border border-gray-700 rounded-lg p-4 space-y-3">
+              {/* Status + Liga/Desliga */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2.5 h-2.5 rounded-full ${ollamaOnline ? "bg-green-500" : "bg-red-500"}`} />
+                  <span className="text-sm font-medium">
+                    Ollama {ollamaOnline ? "Online" : "Offline"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  disabled={ollamaLoading}
+                  onClick={async () => {
+                    setOllamaLoading(true);
+                    try {
+                      if (ollamaOnline) {
+                        await stopOllama();
+                      } else {
+                        await startOllama();
+                      }
+                      await refreshOllamaStatus();
+                    } catch { /* ignore */ }
+                    setOllamaLoading(false);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    ollamaOnline
+                      ? "bg-red-600/20 text-red-400 hover:bg-red-600/30 border border-red-500/30"
+                      : "bg-green-600/20 text-green-400 hover:bg-green-600/30 border border-green-500/30"
+                  } disabled:opacity-50`}
+                >
+                  {ollamaLoading ? "..." : ollamaOnline ? "Desligar" : "Ligar"}
+                </button>
+              </div>
+
+              {/* Modelo selecionado */}
+              {ollamaOnline && options?.ollama_models && options.ollama_models.length > 0 && (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Modelo</label>
+                  <select value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                    {options.ollama_models.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name} ({m.size_gb}GB)</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Sem modelos */}
+              {ollamaOnline && (!options?.ollama_models || options.ollama_models.length === 0) && (
+                <div className="text-sm text-yellow-400">
+                  Nenhum modelo instalado. Baixe um modelo abaixo.
+                </div>
+              )}
+
+              {/* Baixar novo modelo */}
+              {ollamaOnline && (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Baixar modelo</label>
+                  <div className="flex gap-2">
+                    <select value={pullModelName} onChange={(e) => setPullModelName(e.target.value)}
+                      className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                      <option value="qwen2.5:7b">qwen2.5:7b (5GB) - rapido</option>
+                      <option value="qwen2.5:14b">qwen2.5:14b (9GB) - recomendado</option>
+                      <option value="qwen2.5:32b">qwen2.5:32b (20GB) - muito bom</option>
+                      <option value="qwen2.5:72b">qwen2.5:72b (45GB) - excelente</option>
+                      <option value="gemma3:12b">gemma3:12b (8GB) - alternativa</option>
+                      <option value="llama3.1:8b">llama3.1:8b (5GB) - alternativa</option>
+                    </select>
+                    <button
+                      type="button"
+                      disabled={ollamaPulling}
+                      onClick={async () => {
+                        setOllamaPulling(true);
+                        try {
+                          await pullOllamaModel(pullModelName);
+                          await refreshOllamaStatus();
+                        } catch { /* ignore */ }
+                        setOllamaPulling(false);
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-lg text-sm font-medium transition-colors"
+                    >
+                      {ollamaPulling ? "Baixando..." : "Baixar"}
+                    </button>
+                  </div>
+                  {ollamaPulling && (
+                    <div className="mt-2 text-xs text-blue-400 animate-pulse">
+                      Baixando modelo... Isso pode demorar alguns minutos.
+                    </div>
+                  )}
                 </div>
               )}
             </div>

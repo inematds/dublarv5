@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.job_manager import JobManager
-from api.model_manager import get_ollama_models, get_ollama_status, unload_ollama_model, get_all_options
+from api.model_manager import get_ollama_models, get_ollama_status, unload_ollama_model, start_ollama, stop_ollama, pull_ollama_model, get_all_options
 from api.system_monitor import get_system_status
 from api.stats_tracker import get_stats_summary
 
@@ -75,6 +75,37 @@ async def unload_model(model: str):
     """Descarrega modelo Ollama para liberar VRAM."""
     success = await unload_ollama_model(model)
     return {"success": success, "model": model}
+
+
+@app.post("/api/ollama/start")
+async def api_start_ollama():
+    """Inicia o servico Ollama."""
+    return await start_ollama()
+
+
+@app.post("/api/ollama/stop")
+async def api_stop_ollama():
+    """Para o servico Ollama."""
+    return await stop_ollama()
+
+
+@app.get("/api/ollama/status")
+async def api_ollama_status():
+    """Status do Ollama (online, modelos)."""
+    status = await get_ollama_status()
+    if status["online"]:
+        status["models"] = await get_ollama_models()
+    return status
+
+
+@app.post("/api/ollama/pull")
+async def api_pull_model(body: dict):
+    """Baixa um modelo no Ollama."""
+    model = body.get("model", "")
+    if not model:
+        raise HTTPException(400, "Campo 'model' obrigatorio")
+    result = await pull_ollama_model(model)
+    return result
 
 
 # --- Jobs ---

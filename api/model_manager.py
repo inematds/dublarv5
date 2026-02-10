@@ -251,6 +251,89 @@ async def get_ollama_status() -> dict:
         return {"online": False, "host": OLLAMA_HOST, "running_models": []}
 
 
+async def start_ollama() -> dict:
+    """Inicia o servico Ollama."""
+    import subprocess, shutil
+    ollama_bin = shutil.which("ollama")
+    if not ollama_bin:
+        return {"success": False, "error": "Ollama nao encontrado. Instale: curl -fsSL https://ollama.com/install.sh | sh"}
+    # Verificar se ja esta rodando
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            resp = await client.get(f"{OLLAMA_HOST}/api/tags")
+            if resp.status_code == 200:
+                return {"success": True, "message": "Ollama ja estava rodando"}
+    except Exception:
+        pass
+    # Iniciar em background
+    try:
+        subprocess.Popen(
+            [ollama_bin, "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        # Aguardar ate 5s para ficar pronto
+        import asyncio
+        for _ in range(10):
+            await asyncio.sleep(0.5)
+            try:
+                async with httpx.AsyncClient(timeout=2) as client:
+                    resp = await client.get(f"{OLLAMA_HOST}/api/tags")
+                    if resp.status_code == 200:
+                        return {"success": True, "message": "Ollama iniciado"}
+            except Exception:
+                continue
+        return {"success": False, "error": "Ollama iniciou mas nao respondeu a tempo"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def stop_ollama() -> dict:
+    """Para o servico Ollama."""
+    import subprocess, signal
+    try:
+        # Encontrar PID do ollama serve
+        result = subprocess.run(["pgrep", "-f", "ollama serve"], capture_output=True, text=True)
+        pids = result.stdout.strip().split()
+        if not pids:
+            return {"success": True, "message": "Ollama nao estava rodando"}
+        for pid in pids:
+            os.kill(int(pid), signal.SIGTERM)
+        # Aguardar parar
+        import asyncio
+        for _ in range(6):
+            await asyncio.sleep(0.5)
+            try:
+                async with httpx.AsyncClient(timeout=1) as client:
+                    await client.get(f"{OLLAMA_HOST}/api/tags")
+            except Exception:
+                return {"success": True, "message": "Ollama parado"}
+        return {"success": True, "message": "Sinal enviado, pode demorar a parar"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def pull_ollama_model(model: str):
+    """Baixa um modelo no Ollama (streaming progress)."""
+    try:
+        async with httpx.AsyncClient(timeout=600) as client:
+            async with client.stream(
+                "POST",
+                f"{OLLAMA_HOST}/api/pull",
+                json={"name": model, "stream": True},
+            ) as resp:
+                last_status = ""
+                async for line in resp.aiter_lines():
+                    if line.strip():
+                        import json
+                        data = json.loads(line)
+                        last_status = data.get("status", "")
+                return {"success": True, "status": last_status}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 async def unload_ollama_model(model: str) -> bool:
     """Descarrega modelo Ollama para liberar VRAM."""
     try:
