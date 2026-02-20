@@ -2,14 +2,24 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { getJob, getJobLogs, cancelJob, getDownloadUrl, getSubtitlesUrl, createJobWebSocket } from "@/lib/api";
+import {
+  getJob, getJobLogs, cancelJob,
+  getDownloadUrl, getSubtitlesUrl,
+  getClips, getClipUrl, getClipsZipUrl, getTranscriptUrl,
+  createJobWebSocket,
+} from "@/lib/api";
 
 type JobData = Record<string, unknown>;
 type LogEntry = { timestamp: string; level: string; message: string };
+type LogProgress = {
+  type: string; percent: number; size?: string; speed?: string; eta?: string; detail?: string;
+};
 type StageInfo = {
   num: number; id: string; name: string; icon: string;
   status: string; time?: number; elapsed?: number; estimate?: number; tool?: string;
+  log_progress?: LogProgress;
 };
+type ClipInfo = { name: string; size_bytes: number; url: string };
 
 function formatTime(seconds: number | undefined | null): string {
   if (!seconds || seconds <= 0) return "-";
@@ -24,11 +34,18 @@ function formatTime(seconds: number | undefined | null): string {
   return `${h}h${m}m`;
 }
 
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
 export default function JobDetail() {
   const params = useParams();
   const jobId = String(params.id);
   const [job, setJob] = useState<JobData | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [clips, setClips] = useState<ClipInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
@@ -43,12 +60,28 @@ export default function JobDetail() {
     getJobLogs(jobId, 200).then(setLogs).catch(() => {});
   }, [jobId]);
 
+  const fetchClips = useCallback((jobType: string) => {
+    if (jobType === "cutting") {
+      getClips(jobId).then(setClips).catch(() => {});
+    }
+  }, [jobId]);
+
   useEffect(() => {
     fetchJob();
     fetchLogs();
     const interval = setInterval(() => { fetchJob(); fetchLogs(); }, 3000);
     return () => clearInterval(interval);
   }, [fetchJob, fetchLogs]);
+
+  useEffect(() => {
+    if (job) {
+      const config = (job.config || {}) as Record<string, unknown>;
+      const jobType = String(config.job_type || "dubbing");
+      if (job.status === "completed" && jobType === "cutting") {
+        fetchClips(jobType);
+      }
+    }
+  }, [job, fetchClips]);
 
   useEffect(() => {
     try {
@@ -95,6 +128,7 @@ export default function JobDetail() {
   const isActive = status === "running" || status === "queued";
   const isCompleted = status === "completed";
   const isFailed = status === "failed";
+  const jobType = String(config.job_type || "dubbing");
 
   const etaText = String(progress.eta_text || "");
   const elapsedS = Number(progress.elapsed_s || job?.duration_s || 0);
@@ -109,6 +143,13 @@ export default function JobDetail() {
   };
   const sl = statusLabels[status] || { color: "text-gray-400", label: status };
 
+  const jobTypeLabels: Record<string, { label: string; className: string }> = {
+    dubbing: { label: "Dublagem", className: "bg-blue-500/20 text-blue-400 border border-blue-500/30" },
+    cutting: { label: "Corte", className: "bg-orange-500/20 text-orange-400 border border-orange-500/30" },
+    transcription: { label: "Transcricao", className: "bg-purple-500/20 text-purple-400 border border-purple-500/30" },
+  };
+  const jtl = jobTypeLabels[jobType] || jobTypeLabels.dubbing;
+
   return (
     <div className="max-w-4xl mx-auto">
       {error && (
@@ -121,6 +162,9 @@ export default function JobDetail() {
           <div className="flex items-center gap-3 mb-1">
             <h1 className="text-2xl font-bold font-mono">{jobId}</h1>
             <span className={`text-lg font-medium ${sl.color}`}>{sl.label}</span>
+            <span className={`px-2 py-0.5 rounded text-xs font-bold ${jtl.className}`}>
+              {jtl.label}
+            </span>
             <span className={`px-2 py-0.5 rounded text-xs font-bold ${
               device === "cuda" ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
             }`}>
@@ -129,8 +173,21 @@ export default function JobDetail() {
           </div>
           <p className="text-gray-500 text-sm">
             {job?.created_at ? new Date(Number(job.created_at) * 1000).toLocaleString("pt-BR") : "-"}
-            <span className="mx-2">|</span>{String(config.src_lang || "auto")} → {String(config.tgt_lang || "pt")}
-            <span className="mx-2">|</span>{String(config.content_type || "palestra")}
+            {jobType === "dubbing" && (
+              <>
+                <span className="mx-2">|</span>{String(config.src_lang || "auto")} → {String(config.tgt_lang || "pt")}
+              </>
+            )}
+            {jobType === "cutting" && (
+              <>
+                <span className="mx-2">|</span>Modo: {String(config.mode || "manual")}
+              </>
+            )}
+            {jobType === "transcription" && (
+              <>
+                <span className="mx-2">|</span>ASR: {String(config.asr_engine || "whisper")}
+              </>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -195,7 +252,28 @@ export default function JobDetail() {
                   <div className={`flex-1 ${isRunning ? "text-white font-medium" : isDone ? "text-gray-400" : "text-gray-600"}`}>
                     {stage.name}
                     {stage.tool && <span className="text-xs text-gray-500 ml-2">{stage.tool}</span>}
-                    {isRunning && <span className="ml-2 inline-block animate-pulse">●</span>}
+                    {isRunning && !stage.log_progress && <span className="ml-2 inline-block animate-pulse">●</span>}
+                    {/* Download/tool progress */}
+                    {isRunning && stage.log_progress && (
+                      <div className="mt-1">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 bg-gray-700 rounded-full h-1.5">
+                            <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
+                              style={{ width: `${stage.log_progress.percent}%` }} />
+                          </div>
+                          <span className="text-xs text-blue-400 font-mono w-12 text-right">
+                            {stage.log_progress.percent.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {stage.log_progress.detail || (
+                            <>{stage.log_progress.size && <span>{stage.log_progress.size}</span>}
+                            {stage.log_progress.speed && <span className="ml-2">{stage.log_progress.speed}</span>}
+                            {stage.log_progress.eta && <span className="ml-2">ETA {stage.log_progress.eta}</span>}</>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Time */}
@@ -225,8 +303,8 @@ export default function JobDetail() {
         </section>
       )}
 
-      {/* Results */}
-      {isCompleted && (
+      {/* Results - Dubbing */}
+      {isCompleted && jobType === "dubbing" && (
         <section className="border border-green-500/30 bg-green-500/5 rounded-lg p-5 mb-6">
           <h2 className="text-lg font-semibold text-green-400 mb-4">Resultado</h2>
           <div className="bg-black rounded-lg overflow-hidden mb-4">
@@ -258,38 +336,122 @@ export default function JobDetail() {
         </section>
       )}
 
+      {/* Results - Cutting */}
+      {isCompleted && jobType === "cutting" && (
+        <section className="border border-orange-500/30 bg-orange-500/5 rounded-lg p-5 mb-6">
+          <h2 className="text-lg font-semibold text-orange-400 mb-4">
+            Clips Gerados {clips.length > 0 && <span className="text-base font-normal text-gray-400">({clips.length} clips)</span>}
+          </h2>
+
+          {clips.length === 0 ? (
+            <p className="text-gray-500 text-sm">Carregando clips...</p>
+          ) : (
+            <div className="space-y-2 mb-4">
+              {clips.map((clip) => (
+                <div key={clip.name} className="flex items-center gap-3 bg-gray-900 rounded-lg px-4 py-3">
+                  <span className="text-orange-400">✂</span>
+                  <span className="flex-1 font-mono text-sm">{clip.name}</span>
+                  <span className="text-xs text-gray-500">{formatSize(clip.size_bytes)}</span>
+                  <a href={getClipUrl(jobId, clip.name)} download
+                    className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1 rounded text-xs font-medium transition-colors">
+                    Download
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <a href={getClipsZipUrl(jobId)} download
+            className="inline-flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+            📦 Download ZIP (todos os clips)
+          </a>
+          {!!job?.duration_s && (
+            <div className="mt-4 text-sm text-gray-400">
+              Tempo total: <span className="text-white">{formatTime(Number(job.duration_s))}</span>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Results - Transcription */}
+      {isCompleted && jobType === "transcription" && (
+        <section className="border border-purple-500/30 bg-purple-500/5 rounded-lg p-5 mb-6">
+          <h2 className="text-lg font-semibold text-purple-400 mb-4">Transcricao</h2>
+          <div className="flex flex-wrap gap-3">
+            <a href={getTranscriptUrl(jobId, "srt")} download
+              className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+              <span>📄</span> Download SRT
+            </a>
+            <a href={getTranscriptUrl(jobId, "txt")} download
+              className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm transition-colors">
+              <span>📝</span> Download TXT
+            </a>
+            <a href={getTranscriptUrl(jobId, "json")} download
+              className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm transition-colors">
+              <span>🗂</span> Download JSON
+            </a>
+          </div>
+          {!!job?.duration_s && (
+            <div className="mt-4 text-sm text-gray-400">
+              Tempo total: <span className="text-white">{formatTime(Number(job.duration_s))}</span>
+              <span className="mx-2">|</span>
+              Device: <span className={device === "cuda" ? "text-green-400" : "text-yellow-400"}>{device === "cuda" ? "GPU" : "CPU"}</span>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Config */}
       <section className="border border-gray-800 rounded-lg p-5 mb-6">
         <h2 className="text-lg font-semibold mb-3">Configuracao</h2>
         <div className="text-sm mb-3">
           <span className="text-gray-500">Input:</span> <span className="text-gray-300 break-all">{String(config.input || "-")}</span>
         </div>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div><span className="text-gray-500">Idiomas:</span> {String(config.src_lang || "auto")} → {String(config.tgt_lang || "pt")}</div>
-          <div><span className="text-gray-500">Tipo:</span> {String(config.content_type || "palestra")}</div>
-          <div><span className="text-gray-500">ASR:</span> {String(config.asr_engine || "whisper")}</div>
-          <div>
-            <span className="text-gray-500">
-              {String(config.asr_engine) === "parakeet" ? "Modelo Parakeet:" : "Modelo Whisper:"}
-            </span>{" "}
-            {String(config.asr_engine) === "parakeet"
-              ? String(config.parakeet_model || "nvidia/parakeet-tdt-1.1b").split("/").pop()
-              : String(config.whisper_model || "large-v3")}
+        {jobType === "dubbing" && (
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div><span className="text-gray-500">Idiomas:</span> {String(config.src_lang || "auto")} → {String(config.tgt_lang || "pt")}</div>
+            <div><span className="text-gray-500">Tipo:</span> {String(config.content_type || "palestra")}</div>
+            <div><span className="text-gray-500">ASR:</span> {String(config.asr_engine || "whisper")}</div>
+            <div>
+              <span className="text-gray-500">
+                {String(config.asr_engine) === "parakeet" ? "Modelo Parakeet:" : "Modelo Whisper:"}
+              </span>{" "}
+              {String(config.asr_engine) === "parakeet"
+                ? String(config.parakeet_model || "nvidia/parakeet-tdt-1.1b").split("/").pop()
+                : String(config.whisper_model || "large-v3")}
+            </div>
+            <div><span className="text-gray-500">TTS:</span> {String(config.tts_engine || "edge")}</div>
+            {!!config.voice && <div><span className="text-gray-500">Voz:</span> {String(config.voice)}</div>}
+            <div><span className="text-gray-500">Traducao:</span> {String(config.translation_engine || "m2m100")}</div>
+            {!!config.ollama_model && <div><span className="text-gray-500">Modelo Ollama:</span> {String(config.ollama_model)}</div>}
+            <div><span className="text-gray-500">Sync:</span> {String(config.sync_mode || "smart")}</div>
+            <div><span className="text-gray-500">Device:</span> <span className={device === "cuda" ? "text-green-400" : "text-yellow-400"}>{device.toUpperCase()}</span></div>
           </div>
-          <div><span className="text-gray-500">TTS:</span> {String(config.tts_engine || "edge")}</div>
-          {!!config.voice && <div><span className="text-gray-500">Voz:</span> {String(config.voice)}</div>}
-          <div><span className="text-gray-500">Traducao:</span> {String(config.translation_engine || "m2m100")}</div>
-          {!!config.ollama_model && <div><span className="text-gray-500">Modelo Ollama:</span> {String(config.ollama_model)}</div>}
-          {!!config.large_model && <div><span className="text-gray-500">M2M100:</span> 1.2B (grande)</div>}
-          <div><span className="text-gray-500">Sync:</span> {String(config.sync_mode || "smart")}</div>
-          <div><span className="text-gray-500">Max Stretch:</span> {String(config.maxstretch || "1.3")}x</div>
-          {!!config.tolerance && <div><span className="text-gray-500">Tolerancia:</span> {String(config.tolerance)}</div>}
-          <div><span className="text-gray-500">Device:</span> <span className={device === "cuda" ? "text-green-400" : "text-yellow-400"}>{device.toUpperCase()}</span></div>
-          <div><span className="text-gray-500">Seed:</span> {String(config.seed ?? "-")}</div>
-          {!!config.no_truncate && <div><span className="text-green-400">Frases completas (sem corte)</span></div>}
-          {!!config.diarize && <div><span className="text-purple-400">Multi-falante (diarizacao)</span></div>}
-          {!!config.clone_voice && <div><span className="text-blue-400">Clonar voz original</span></div>}
-        </div>
+        )}
+        {jobType === "cutting" && (
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div><span className="text-gray-500">Modo:</span> {String(config.mode || "manual")}</div>
+            {config.mode === "manual" && config.timestamps && (
+              <div className="col-span-2"><span className="text-gray-500">Timestamps:</span> <code className="bg-gray-800 px-1 rounded">{String(config.timestamps)}</code></div>
+            )}
+            {config.mode === "viral" && (
+              <>
+                <div><span className="text-gray-500">Modelo LLM:</span> {String(config.ollama_model || "-")}</div>
+                <div><span className="text-gray-500">Num clips:</span> {String(config.num_clips || 5)}</div>
+                <div><span className="text-gray-500">Duracao:</span> {String(config.min_duration || 30)}s - {String(config.max_duration || 120)}s</div>
+                <div><span className="text-gray-500">Whisper:</span> {String(config.whisper_model || "large-v3")}</div>
+              </>
+            )}
+          </div>
+        )}
+        {jobType === "transcription" && (
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div><span className="text-gray-500">ASR:</span> {String(config.asr_engine || "whisper")}</div>
+            <div><span className="text-gray-500">Modelo:</span> {String(config.whisper_model || "large-v3")}</div>
+            <div><span className="text-gray-500">Idioma:</span> {String(config.src_lang || "auto-detect")}</div>
+            <div><span className="text-gray-500">Device:</span> <span className={device === "cuda" ? "text-green-400" : "text-yellow-400"}>{device.toUpperCase()}</span></div>
+          </div>
+        )}
       </section>
 
       {/* Logs */}

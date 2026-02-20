@@ -21,6 +21,31 @@ PYTHON_BIN = os.environ.get("PYTHON_BIN", sys.executable or shutil.which("python
 DOCKER_GPU_IMAGE = os.environ.get("DOCKER_GPU_IMAGE", "dublar-pro:gpu")
 PROJECT_DIR = Path(__file__).parent.parent.resolve()
 
+# Stages para jobs de corte manual (3 etapas)
+STAGES_CUT_MANUAL = [
+    {"num": 1, "id": "download", "name": "Download", "icon": "⬇"},
+    {"num": 2, "id": "cutting", "name": "Cortando clips", "icon": "✂"},
+    {"num": 3, "id": "zip", "name": "Criando ZIP", "icon": "📦"},
+]
+
+# Stages para jobs de corte viral (6 etapas)
+STAGES_CUT_VIRAL = [
+    {"num": 1, "id": "download", "name": "Download", "icon": "⬇"},
+    {"num": 2, "id": "extraction", "name": "Extracao de audio", "icon": "🔊"},
+    {"num": 3, "id": "transcription", "name": "Transcricao", "icon": "📝"},
+    {"num": 4, "id": "analysis", "name": "Analise viral", "icon": "🔥"},
+    {"num": 5, "id": "cutting", "name": "Cortando clips", "icon": "✂"},
+    {"num": 6, "id": "zip", "name": "Criando ZIP", "icon": "📦"},
+]
+
+# Stages para jobs de transcricao (4 etapas)
+STAGES_TRANSCRIPTION = [
+    {"num": 1, "id": "download", "name": "Download", "icon": "⬇"},
+    {"num": 2, "id": "extraction", "name": "Extracao de audio", "icon": "🔊"},
+    {"num": 3, "id": "transcription", "name": "Transcricao", "icon": "📝"},
+    {"num": 4, "id": "export", "name": "Exportando legendas", "icon": "💾"},
+]
+
 
 def _detect_docker_gpu() -> bool:
     """Verifica se a imagem Docker GPU existe e Docker esta disponivel."""
@@ -82,6 +107,17 @@ class Job:
         end = self.finished_at or time.time()
         return end - self.started_at
 
+    def _get_stages(self) -> list:
+        """Retorna a lista de stages corretos baseado no tipo de job."""
+        job_type = self.config.get("job_type", "dubbing")
+        if job_type == "cutting":
+            mode = self.config.get("mode", "manual")
+            return STAGES_CUT_VIRAL if mode == "viral" else STAGES_CUT_MANUAL
+        elif job_type == "transcription":
+            return STAGES_TRANSCRIPTION
+        else:
+            return STAGES
+
     def to_dict(self) -> dict:
         checkpoint = self._read_checkpoint()
         progress = self._calc_progress(checkpoint)
@@ -109,7 +145,72 @@ class Job:
                 pass
         return {}
 
+    def _calc_progress_simple(self, checkpoint: dict) -> dict:
+        """Calculo de progresso simplificado para jobs nao-dubbing (sem ETA)."""
+        stages = self._get_stages()
+        current_step = checkpoint.get("last_step_num", 0)
+        total = len(stages)
+        percent = round((current_step / total) * 100) if total > 0 else 0
+
+        # Trackear tempo das etapas
+        if current_step != self._last_stage_num and current_step > 0:
+            now = time.time()
+            start_time = self._last_stage_start if self._last_stage_start > 0 else (self.started_at or now)
+            elapsed = round(now - start_time, 1)
+
+            stages_completed = current_step - self._last_stage_num
+            if stages_completed > 0:
+                per_stage = round(elapsed / stages_completed, 1)
+                for i in range(self._last_stage_num, current_step):
+                    if i < len(stages):
+                        self.stage_times[stages[i]["id"]] = per_stage
+
+            self._last_stage_num = current_step
+            self._last_stage_start = now
+        elif self._last_stage_num == 0 and self.started_at:
+            self._last_stage_start = self.started_at
+
+        current_stage_elapsed = round(time.time() - self._last_stage_start, 1) if self._last_stage_start > 0 else 0
+
+        # Montar info das stages
+        stages_info = []
+        for stage in stages:
+            snum = stage["num"]
+            sid = stage["id"]
+            if snum < current_step + 1:
+                st = {**stage, "status": "done", "time": self.stage_times.get(sid)}
+            elif snum == current_step + 1:
+                st = {**stage, "status": "running", "elapsed": current_stage_elapsed}
+                log_progress = self._parse_log_progress()
+                if log_progress:
+                    st["log_progress"] = log_progress
+            else:
+                st = {**stage, "status": "pending"}
+            stages_info.append(st)
+
+        stage_name = stages[current_step]["name"] if current_step < total else "Concluido"
+        stage_id = stages[current_step]["id"] if current_step < total else "done"
+
+        return {
+            "current_stage": current_step,
+            "next_stage": current_step + 1,
+            "total_stages": total,
+            "percent": percent,
+            "stage_name": stage_name,
+            "stage_id": stage_id,
+            "stages": stages_info,
+            "device": self.device,
+            "eta_seconds": None,
+            "eta_text": None,
+            "eta_confidence": "low",
+            "elapsed_s": round(self.duration, 1),
+        }
+
     def _calc_progress(self, checkpoint: dict) -> dict:
+        job_type = self.config.get("job_type", "dubbing")
+        if job_type != "dubbing":
+            return self._calc_progress_simple(checkpoint)
+
         current_step = checkpoint.get("last_step_num", 0)
         total = len(STAGES)
         percent = round((current_step / total) * 100) if total > 0 else 0
@@ -174,6 +275,10 @@ class Job:
                 st = {**stage, "status": "done", "time": self.stage_times.get(sid), "tool": tool}
             elif snum == current_step + 1:
                 st = {**stage, "status": "running", "elapsed": current_stage_elapsed, "tool": tool}
+                # Adicionar progresso detalhado do log (ex: yt-dlp %)
+                log_progress = self._parse_log_progress()
+                if log_progress:
+                    st["log_progress"] = log_progress
             else:
                 est = eta["stage_estimates"].get(sid, {}).get("est_seconds") if eta else None
                 st = {**stage, "status": "pending", "estimate": est, "tool": tool}
@@ -193,6 +298,38 @@ class Job:
             "eta_confidence": eta["confidence"] if eta else "low",
             "elapsed_s": round(self.duration, 1),
         }
+
+    def _parse_log_progress(self) -> dict | None:
+        """Extrai progresso do yt-dlp ou outras ferramentas do output.log."""
+        log_path = self.workdir / "output.log"
+        if not log_path.exists():
+            return None
+        try:
+            # Ler ultimos 4KB do log (suficiente para a linha mais recente)
+            with open(log_path, "rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                f.seek(max(0, size - 4096))
+                tail = f.read().decode("utf-8", errors="replace")
+            # yt-dlp: "[download]  52.3% of  371.95MiB at    5.38MiB/s ETA 00:32"
+            match = re.search(
+                r"\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\S+)\s+at\s+([\d.]+\S+)\s+ETA\s+(\S+)",
+                tail,
+            )
+            if match:
+                return {
+                    "type": "download",
+                    "percent": float(match.group(1)),
+                    "size": match.group(2),
+                    "speed": match.group(3),
+                    "eta": match.group(4),
+                }
+            # ffmpeg merge: "[Merger] Merging formats into ..."
+            if "[Merger]" in tail or "Merging formats" in tail:
+                return {"type": "download", "percent": 99, "detail": "Mesclando audio+video..."}
+        except Exception:
+            pass
+        return None
 
     def read_logs(self, last_n: int = 50) -> list:
         log_path = self.workdir / "output.log"
@@ -234,6 +371,8 @@ class JobManager:
             try:
                 config = json.loads(config_path.read_text())
                 job = Job(job_id, config)
+                job_type = config.get("job_type", "dubbing")
+
                 # Restaurar created_at real (mtime do config.json = momento da criacao)
                 job.created_at = config_path.stat().st_mtime
                 # Restaurar stage_times se existir
@@ -254,17 +393,25 @@ class JobManager:
                 log_path = job_dir / "output.log"
                 if log_path.exists():
                     log_stat = log_path.stat()
-                    # output.log e criado quando o job inicia
-                    job.started_at = log_stat.st_mtime  # aprox (sera sobrescrito se tiver dado melhor)
-                    # Se stage_times existir, calcular duracao real
+                    job.started_at = log_stat.st_mtime
                     if job.stage_times:
                         total_dur = sum(job.stage_times.values())
-                        job.started_at = job.created_at  # aprox
+                        job.started_at = job.created_at
                         job.finished_at = job.created_at + total_dur
 
-                dublado_dir = job_dir / "dublado"
-                has_output = dublado_dir.exists() and any(dublado_dir.glob("*.mp4"))
-                log_path = job_dir / "output.log"
+                # Detectar conclusao por tipo de job
+                if job_type == "cutting":
+                    clips_dir = job_dir / "clips"
+                    has_output = clips_dir.exists() and any(clips_dir.glob("clip_*.mp4"))
+                elif job_type == "transcription":
+                    transcript_dir = job_dir / "transcription"
+                    has_output = transcript_dir.exists() and any(
+                        transcript_dir.glob("transcript.*")
+                    )
+                else:
+                    dublado_dir = job_dir / "dublado"
+                    has_output = dublado_dir.exists() and any(dublado_dir.glob("*.mp4"))
+
                 if has_output:
                     job.status = "completed"
                 elif log_path.exists():
@@ -300,9 +447,17 @@ class JobManager:
     async def create_job(self, config: dict) -> Job:
         job_id = str(uuid.uuid4())[:8]
         job = Job(job_id, config)
+        job_type = config.get("job_type", "dubbing")
+
         job.workdir.mkdir(parents=True, exist_ok=True)
         (job.workdir / "dub_work").mkdir(exist_ok=True)
-        (job.workdir / "dublado").mkdir(exist_ok=True)
+
+        if job_type == "cutting":
+            (job.workdir / "clips").mkdir(exist_ok=True)
+        elif job_type == "transcription":
+            (job.workdir / "transcription").mkdir(exist_ok=True)
+        else:
+            (job.workdir / "dublado").mkdir(exist_ok=True)
 
         self.jobs[job_id] = job
         (job.workdir / "config.json").write_text(json.dumps(config, indent=2))
@@ -317,10 +472,22 @@ class JobManager:
         job._last_stage_start = job.started_at
         await self._notify(job.id, {"event": "started", "job": job.to_dict()})
 
+        job_type = job.config.get("job_type", "dubbing")
+
         if DOCKER_GPU_AVAILABLE:
-            cmd = self._build_docker_command(job)
+            if job_type == "cutting":
+                cmd = self._build_docker_cut_command(job)
+            elif job_type == "transcription":
+                cmd = self._build_docker_transcribe_command(job)
+            else:
+                cmd = self._build_docker_command(job)
         else:
-            cmd = self._build_local_command(job)
+            if job_type == "cutting":
+                cmd = self._build_local_cut_command(job)
+            elif job_type == "transcription":
+                cmd = self._build_local_transcribe_command(job)
+            else:
+                cmd = self._build_local_command(job)
 
         log_path = job.workdir / "output.log"
 
@@ -354,13 +521,13 @@ class JobManager:
                 job.finished_at = time.time()
 
                 # Processar todas as transicoes de etapa pendentes
-                # (a ultima etapa pode ter sido muito rapida e nao capturada no polling)
                 checkpoint = job._read_checkpoint()
                 job._calc_progress(checkpoint)
 
                 # Registrar tempo da ultima etapa
-                if job._last_stage_num > 0 and job._last_stage_num <= len(STAGES):
-                    last_sid = STAGES[job._last_stage_num - 1]["id"]
+                stages = job._get_stages()
+                if job._last_stage_num > 0 and job._last_stage_num <= len(stages):
+                    last_sid = stages[job._last_stage_num - 1]["id"]
                     job.stage_times[last_sid] = round(job.finished_at - job._last_stage_start, 1)
 
                 # Persistir stage_times em disco (sobrevive a restarts)
@@ -372,17 +539,16 @@ class JobManager:
 
                 if exit_code == 0:
                     job.status = "completed"
-                    # Salvar estatisticas para aprendizado
-                    record_job_complete(job.config, job.stage_times, job.duration, job.device)
+                    # Salvar estatisticas para aprendizado (apenas dubbing)
+                    if job_type == "dubbing":
+                        record_job_complete(job.config, job.stage_times, job.duration, job.device)
                 elif exit_code == -signal.SIGTERM or exit_code == -signal.SIGKILL:
                     job.status = "cancelled"
                 else:
                     job.status = "failed"
-                    # Tentar capturar erro do log
                     error_msg = f"Exit code: {exit_code}"
                     try:
                         lines = log_path.read_text().splitlines()
-                        # Pegar ultimas linhas com erro
                         for line in reversed(lines[-20:]):
                             if "error" in line.lower() or "traceback" in line.lower() or "exception" in line.lower():
                                 error_msg = line.strip()
@@ -397,6 +563,158 @@ class JobManager:
             job.finished_at = time.time()
 
         await self._notify(job.id, {"event": "finished", "job": job.to_dict()})
+
+    def _build_docker_cut_command(self, job: Job) -> list:
+        """Monta comando Docker para corte de clips."""
+        config = job.config
+        workdir_abs = str(job.workdir.resolve())
+        script_path = str(PROJECT_DIR / "clipar_v1.py")
+        hf_cache = str(Path.home() / ".cache" / "huggingface")
+        whisper_cache = str(Path.home() / ".cache" / "whisper")
+
+        Path(hf_cache).mkdir(parents=True, exist_ok=True)
+        Path(whisper_cache).mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            "docker", "run", "--rm",
+            "--gpus", "all",
+            "--ipc=host",
+            "--name", f"dublarv5-{job.id}",
+            "--ulimit", "memlock=-1",
+            "--ulimit", "stack=67108864",
+            "--network", "host",
+            # Script montado como volume read-only
+            "-v", f"{script_path}:/app/clipar_v1.py:ro",
+            # Dirs de trabalho
+            "-v", f"{workdir_abs}/dub_work:/app/dub_work",
+            "-v", f"{workdir_abs}/clips:/app/clips",
+            # Cache de modelos
+            "-v", f"{hf_cache}:/root/.cache/huggingface",
+            "-v", f"{whisper_cache}:/root/.cache/whisper",
+            # Sobrescrever entrypoint para rodar nosso script
+            "--entrypoint", "python",
+            DOCKER_GPU_IMAGE,
+            "/app/clipar_v1.py",
+        ]
+
+        input_val = config["input"]
+        if not input_val.startswith("http") and os.path.exists(input_val):
+            input_abs = str(Path(input_val).resolve())
+            cmd.insert(-3, "-v")
+            cmd.insert(-3, f"{input_abs}:/app/input_video{Path(input_val).suffix}")
+            input_val = f"/app/input_video{Path(input_val).suffix}"
+
+        cmd.extend(["--in", input_val])
+        cmd.extend(["--outdir", "/app/clips"])
+        cmd.extend(["--mode", config.get("mode", "manual")])
+
+        if config.get("mode") == "manual" and config.get("timestamps"):
+            cmd.extend(["--timestamps", config["timestamps"]])
+        elif config.get("mode") == "viral":
+            if config.get("ollama_model"):
+                cmd.extend(["--ollama-model", config["ollama_model"]])
+            if config.get("num_clips"):
+                cmd.extend(["--num-clips", str(config["num_clips"])])
+            if config.get("min_duration"):
+                cmd.extend(["--min-duration", str(config["min_duration"])])
+            if config.get("max_duration"):
+                cmd.extend(["--max-duration", str(config["max_duration"])])
+            if config.get("whisper_model"):
+                cmd.extend(["--whisper-model", config["whisper_model"]])
+
+        return cmd
+
+    def _build_local_cut_command(self, job: Job) -> list:
+        """Monta comando local para corte de clips."""
+        config = job.config
+        script_path = str(PROJECT_DIR / "clipar_v1.py")
+        cmd = [PYTHON_BIN, script_path]
+
+        cmd.extend(["--in", config["input"]])
+        cmd.extend(["--outdir", str(job.workdir.resolve() / "clips")])
+        cmd.extend(["--mode", config.get("mode", "manual")])
+
+        if config.get("mode") == "manual" and config.get("timestamps"):
+            cmd.extend(["--timestamps", config["timestamps"]])
+        elif config.get("mode") == "viral":
+            if config.get("ollama_model"):
+                cmd.extend(["--ollama-model", config["ollama_model"]])
+            if config.get("num_clips"):
+                cmd.extend(["--num-clips", str(config["num_clips"])])
+            if config.get("min_duration"):
+                cmd.extend(["--min-duration", str(config["min_duration"])])
+            if config.get("max_duration"):
+                cmd.extend(["--max-duration", str(config["max_duration"])])
+            if config.get("whisper_model"):
+                cmd.extend(["--whisper-model", config["whisper_model"]])
+
+        return cmd
+
+    def _build_docker_transcribe_command(self, job: Job) -> list:
+        """Monta comando Docker para transcricao."""
+        config = job.config
+        workdir_abs = str(job.workdir.resolve())
+        script_path = str(PROJECT_DIR / "transcrever_v1.py")
+        hf_cache = str(Path.home() / ".cache" / "huggingface")
+        whisper_cache = str(Path.home() / ".cache" / "whisper")
+
+        Path(hf_cache).mkdir(parents=True, exist_ok=True)
+        Path(whisper_cache).mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            "docker", "run", "--rm",
+            "--gpus", "all",
+            "--ipc=host",
+            "--name", f"dublarv5-{job.id}",
+            "--ulimit", "memlock=-1",
+            "--ulimit", "stack=67108864",
+            "--network", "host",
+            "-v", f"{script_path}:/app/transcrever_v1.py:ro",
+            "-v", f"{workdir_abs}/dub_work:/app/dub_work",
+            "-v", f"{workdir_abs}/transcription:/app/transcription",
+            "-v", f"{hf_cache}:/root/.cache/huggingface",
+            "-v", f"{whisper_cache}:/root/.cache/whisper",
+            "--entrypoint", "python",
+            DOCKER_GPU_IMAGE,
+            "/app/transcrever_v1.py",
+        ]
+
+        input_val = config["input"]
+        if not input_val.startswith("http") and os.path.exists(input_val):
+            input_abs = str(Path(input_val).resolve())
+            cmd.insert(-3, "-v")
+            cmd.insert(-3, f"{input_abs}:/app/input_video{Path(input_val).suffix}")
+            input_val = f"/app/input_video{Path(input_val).suffix}"
+
+        cmd.extend(["--in", input_val])
+        cmd.extend(["--outdir", "/app/transcription"])
+
+        asr = config.get("asr_engine", "whisper")
+        cmd.extend(["--asr", asr])
+        if config.get("whisper_model"):
+            cmd.extend(["--whisper-model", config["whisper_model"]])
+        if config.get("src_lang"):
+            cmd.extend(["--src", config["src_lang"]])
+
+        return cmd
+
+    def _build_local_transcribe_command(self, job: Job) -> list:
+        """Monta comando local para transcricao."""
+        config = job.config
+        script_path = str(PROJECT_DIR / "transcrever_v1.py")
+        cmd = [PYTHON_BIN, script_path]
+
+        cmd.extend(["--in", config["input"]])
+        cmd.extend(["--outdir", str(job.workdir.resolve() / "transcription")])
+
+        asr = config.get("asr_engine", "whisper")
+        cmd.extend(["--asr", asr])
+        if config.get("whisper_model"):
+            cmd.extend(["--whisper-model", config["whisper_model"]])
+        if config.get("src_lang"):
+            cmd.extend(["--src", config["src_lang"]])
+
+        return cmd
 
     def _build_docker_command(self, job: Job) -> list:
         """Monta comando para rodar pipeline dentro do Docker com GPU."""

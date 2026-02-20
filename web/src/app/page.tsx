@@ -19,6 +19,20 @@ function StatusCard({ title, value, sub, color = "blue" }: { title: string; valu
   );
 }
 
+function JobTypeTag({ jobType }: { jobType: string }) {
+  const tags: Record<string, { label: string; className: string }> = {
+    dubbing: { label: "Dublar", className: "bg-blue-500/20 text-blue-400 border border-blue-500/30" },
+    cutting: { label: "Cortar", className: "bg-orange-500/20 text-orange-400 border border-orange-500/30" },
+    transcription: { label: "Transcrever", className: "bg-purple-500/20 text-purple-400 border border-purple-500/30" },
+  };
+  const tag = tags[jobType] || tags.dubbing;
+  return (
+    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${tag.className}`}>
+      {tag.label}
+    </span>
+  );
+}
+
 export default function Dashboard() {
   const [system, setSystem] = useState<Record<string, unknown> | null>(null);
   const [jobs, setJobs] = useState<Record<string, unknown>[]>([]);
@@ -30,7 +44,7 @@ export default function Dashboard() {
         const [sys, jbs] = await Promise.all([getSystemStatus(), listJobs()]);
         setSystem(sys);
         setJobs(jbs);
-      } catch (e) {
+      } catch {
         setError("API offline. Inicie o backend: uvicorn api.server:app --port 8000");
       }
     };
@@ -42,7 +56,6 @@ export default function Dashboard() {
   const gpu = (system?.gpu || {}) as Record<string, unknown>;
   const cpu = (system?.cpu || {}) as Record<string, unknown>;
   const memory = (system?.memory || {}) as Record<string, unknown>;
-  const disk = (system?.disk || {}) as Record<string, unknown>;
   const ollama = (system?.ollama || {}) as Record<string, unknown>;
 
   const activeJobs = jobs.filter((j) => j.status === "running");
@@ -53,14 +66,26 @@ export default function Dashboard() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-gray-400 mt-1">Monitor do sistema e jobs de dublagem</p>
+          <p className="text-gray-400 mt-1">Monitor do sistema e jobs</p>
         </div>
-        <a
-          href="/new"
-          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-        >
-          + Nova Dublagem
-        </a>
+        {/* Action cards */}
+        <div className="flex gap-3">
+          <a href="/new"
+            className="flex flex-col items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors text-center">
+            <span className="text-lg">🎙</span>
+            <span className="text-sm">Dublar</span>
+          </a>
+          <a href="/cut"
+            className="flex flex-col items-center gap-1 bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors text-center">
+            <span className="text-lg">✂</span>
+            <span className="text-sm">Cortar</span>
+          </a>
+          <a href="/transcribe"
+            className="flex flex-col items-center gap-1 bg-purple-600 hover:bg-purple-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors text-center">
+            <span className="text-lg">📝</span>
+            <span className="text-sm">Transcrever</span>
+          </a>
+        </div>
       </div>
 
       {error && (
@@ -107,20 +132,19 @@ export default function Dashboard() {
             {activeJobs.map((job) => {
               const progress = (job.progress || {}) as Record<string, unknown>;
               const device = String(job.device || progress.device || "cpu");
+              const config = (job.config || {}) as Record<string, unknown>;
+              const jobType = String(config.job_type || "dubbing");
               return (
                 <a key={String(job.id)} href={`/jobs/${job.id}`}
                   className="block border border-blue-500/30 bg-blue-500/5 rounded-lg p-4 hover:bg-blue-500/10 transition-colors">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{String(job.id)}</span>
+                      <JobTypeTag jobType={jobType} />
                       <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${
                         device === "cuda" ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
                       }`}>
                         {device === "cuda" ? "GPU" : "CPU"}
-                      </span>
-                      <span className="text-gray-400 text-sm">
-                        {String((job.config as Record<string, unknown>)?.tgt_lang || "pt")} |{" "}
-                        {String((job.config as Record<string, unknown>)?.tts_engine || "edge")}
                       </span>
                     </div>
                     <div className="text-right">
@@ -151,7 +175,10 @@ export default function Dashboard() {
         <h2 className="text-xl font-semibold mb-4">Jobs Recentes</h2>
         {jobs.length === 0 ? (
           <div className="border border-gray-800 rounded-lg p-8 text-center text-gray-500">
-            Nenhum job ainda. <a href="/new" className="text-blue-400 hover:underline">Criar nova dublagem</a>
+            Nenhum job ainda.{" "}
+            <a href="/new" className="text-blue-400 hover:underline">Dublar</a>,{" "}
+            <a href="/cut" className="text-orange-400 hover:underline">Cortar</a> ou{" "}
+            <a href="/transcribe" className="text-purple-400 hover:underline">Transcrever</a> um video.
           </div>
         ) : (
           <div className="border border-gray-800 rounded-lg overflow-hidden">
@@ -159,10 +186,10 @@ export default function Dashboard() {
               <thead className="bg-gray-900 text-gray-400">
                 <tr>
                   <th className="text-left px-4 py-3">ID</th>
+                  <th className="text-left px-4 py-3">Tipo</th>
                   <th className="text-left px-4 py-3">Status</th>
                   <th className="text-left px-4 py-3">Device</th>
-                  <th className="text-left px-4 py-3">Idioma</th>
-                  <th className="text-left px-4 py-3">TTS</th>
+                  <th className="text-left px-4 py-3">Info</th>
                   <th className="text-left px-4 py-3">Duracao</th>
                 </tr>
               </thead>
@@ -177,12 +204,26 @@ export default function Dashboard() {
                   };
                   const config = (job.config || {}) as Record<string, unknown>;
                   const device = String(job.device || "cpu");
+                  const jobType = String(config.job_type || "dubbing");
+
+                  let infoText = "";
+                  if (jobType === "dubbing") {
+                    infoText = `${config.src_lang || "auto"} → ${config.tgt_lang || "pt"}`;
+                  } else if (jobType === "cutting") {
+                    infoText = String(config.mode || "manual");
+                  } else if (jobType === "transcription") {
+                    infoText = String(config.asr_engine || "whisper");
+                  }
+
                   return (
                     <tr key={String(job.id)} className="border-t border-gray-800 hover:bg-gray-900/50">
                       <td className="px-4 py-3">
                         <a href={`/jobs/${job.id}`} className="text-blue-400 hover:underline font-mono">
                           {String(job.id)}
                         </a>
+                      </td>
+                      <td className="px-4 py-3">
+                        <JobTypeTag jobType={jobType} />
                       </td>
                       <td className={`px-4 py-3 ${statusColors[String(job.status)] || ""}`}>
                         {String(job.status)}
@@ -194,10 +235,7 @@ export default function Dashboard() {
                           {device === "cuda" ? "GPU" : "CPU"}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
-                        {String(config.src_lang || "auto")} &rarr; {String(config.tgt_lang || "pt")}
-                      </td>
-                      <td className="px-4 py-3">{String(config.tts_engine || "edge")}</td>
+                      <td className="px-4 py-3 text-gray-400">{infoText}</td>
                       <td className="px-4 py-3 text-gray-400">{String(job.duration_s || 0)}s</td>
                     </tr>
                   );

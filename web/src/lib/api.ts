@@ -46,19 +46,132 @@ export async function createJob(config: Record<string, unknown>) {
   return fetchApi("/api/jobs", { method: "POST", body: JSON.stringify(config) });
 }
 
-export async function createJobWithUpload(file: File, config: Record<string, unknown>) {
+export async function createJobWithUpload(
+  file: File,
+  config: Record<string, unknown>,
+  onProgress?: (percent: number) => void,
+) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("config_json", JSON.stringify(config));
-  const res = await fetch(`${API_BASE}/api/jobs/upload`, {
-    method: "POST",
-    body: formData,
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/api/jobs/upload`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        try {
+          const err = JSON.parse(xhr.responseText);
+          reject(new Error(err.detail || `HTTP ${xhr.status}`));
+        } catch {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Erro de rede no upload"));
+    xhr.ontimeout = () => reject(new Error("Upload timeout"));
+    xhr.timeout = 600000; // 10 min
+
+    xhr.send(formData);
   });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `HTTP ${res.status}`);
-  }
-  return res.json();
+}
+
+export async function createCutJob(config: Record<string, unknown>) {
+  return fetchApi("/api/jobs/cut", { method: "POST", body: JSON.stringify(config) });
+}
+
+export async function createCutJobWithUpload(
+  file: File,
+  config: Record<string, unknown>,
+  onProgress?: (percent: number) => void,
+) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("config_json", JSON.stringify(config));
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/api/jobs/cut/upload`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        try {
+          const err = JSON.parse(xhr.responseText);
+          reject(new Error(err.detail || `HTTP ${xhr.status}`));
+        } catch {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Erro de rede no upload"));
+    xhr.ontimeout = () => reject(new Error("Upload timeout"));
+    xhr.timeout = 600000;
+
+    xhr.send(formData);
+  });
+}
+
+export async function createTranscriptionJob(config: Record<string, unknown>) {
+  return fetchApi("/api/jobs/transcribe", { method: "POST", body: JSON.stringify(config) });
+}
+
+export async function createTranscriptionJobWithUpload(
+  file: File,
+  config: Record<string, unknown>,
+  onProgress?: (percent: number) => void,
+) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("config_json", JSON.stringify(config));
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/api/jobs/transcribe/upload`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        try {
+          const err = JSON.parse(xhr.responseText);
+          reject(new Error(err.detail || `HTTP ${xhr.status}`));
+        } catch {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Erro de rede no upload"));
+    xhr.ontimeout = () => reject(new Error("Upload timeout"));
+    xhr.timeout = 600000;
+
+    xhr.send(formData);
+  });
 }
 
 export async function listJobs() {
@@ -83,6 +196,22 @@ export function getDownloadUrl(jobId: string) {
 
 export function getSubtitlesUrl(jobId: string, lang = "trad") {
   return `${API_BASE}/api/jobs/${jobId}/subtitles?lang=${lang}`;
+}
+
+export async function getClips(jobId: string) {
+  return fetchApi(`/api/jobs/${jobId}/clips`);
+}
+
+export function getClipUrl(jobId: string, clipName: string) {
+  return `${API_BASE}/api/jobs/${jobId}/clips/${clipName}`;
+}
+
+export function getClipsZipUrl(jobId: string) {
+  return `${API_BASE}/api/jobs/${jobId}/clips/zip`;
+}
+
+export function getTranscriptUrl(jobId: string, format: "srt" | "txt" | "json" = "srt") {
+  return `${API_BASE}/api/jobs/${jobId}/transcript?format=${format}`;
 }
 
 export function createJobWebSocket(jobId: string): WebSocket {
