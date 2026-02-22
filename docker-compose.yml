@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile.api
     container_name: dublar-api
     ports:
-      - "8000:8000"
+      - "8010:8010"
     volumes:
       # Jobs directory (workdirs, checkpoints, output)
       - ./jobs:/app/jobs
@@ -36,9 +36,9 @@ services:
       dockerfile: Dockerfile
     container_name: dublar-web
     ports:
-      - "3000:3000"
+      - "3010:3010"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8010
     depends_on:
       - api
     restart: unless-stopped

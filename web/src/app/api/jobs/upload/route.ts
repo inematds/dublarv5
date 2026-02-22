@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-const BACKEND = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const BACKEND = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8010";
 
 export async function POST(request: NextRequest) {
   const contentType = request.headers.get("content-type") || "";

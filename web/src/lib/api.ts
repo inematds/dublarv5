@@ -240,8 +240,8 @@ export function getDownloadFileUrl(jobId: string) {
 
 export function createJobWebSocket(jobId: string): WebSocket {
   const wsProtocol = typeof window !== "undefined" && window.location.protocol === "https:" ? "wss:" : "ws:";
-  const wsHost = typeof window !== "undefined" ? window.location.host : "localhost:8000";
-  // WebSocket goes directly to backend on port 8000 (Next.js doesn't proxy WS)
-  const backendHost = wsHost.replace(":3000", ":8000");
+  const wsHost = typeof window !== "undefined" ? window.location.host : "localhost:8010";
+  // WebSocket goes directly to backend on port 8010 (Next.js doesn't proxy WS)
+  const backendHost = wsHost.replace(":3010", ":8010");
   return new WebSocket(`${wsProtocol}//${backendHost}/ws/jobs/${jobId}`);
 }
