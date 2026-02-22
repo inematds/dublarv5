@@ -356,7 +356,7 @@ def download_youtube(url, output_dir):
 
     sh([
         "yt-dlp",
-        "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
         "--restrict-filenames",  # Remove caracteres especiais do nome
         "-o", output_template,

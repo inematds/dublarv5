@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clipar v1 - Corte de clips de video por timestamps manuais ou analise viral via Ollama."""
+"""Clipar v1 - Corte de clips de video por timestamps manuais ou analise viral via LLM."""
 
 import argparse
 import json
@@ -9,6 +9,15 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+
+# Base URLs para providers OpenAI-compativeis
+PROVIDER_BASE_URLS = {
+    "openai":     "https://api.openai.com",
+    "groq":       "https://api.groq.com/openai",
+    "deepseek":   "https://api.deepseek.com",
+    "together":   "https://api.together.xyz",
+    "openrouter": "https://openrouter.ai/api",
+}
 
 
 def write_checkpoint(workdir: Path, step_num: int, step_id: str, step_name: str):
@@ -32,7 +41,8 @@ def download_input(input_val: str, workdir: Path) -> Path:
         out_template = workdir / "dub_work" / "source.%(ext)s"
         cmd = [
             "yt-dlp",
-            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            # acodec!=none garante que o formato tenha audio (evita video-only)
+            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[acodec!=none][ext=mp4]/best[acodec!=none]/best",
             "--merge-output-format", "mp4",
             "--output", str(out_template),
             "--no-playlist",
@@ -65,9 +75,10 @@ def parse_time_str(s: str) -> float:
 
 
 def parse_timestamps(timestamps_str: str) -> list[tuple[float, float]]:
-    """Parseia 'HH:MM:SS-HH:MM:SS, MM:SS-MM:SS, ...' em lista de (start, end)."""
+    """Parseia 'HH:MM:SS-HH:MM:SS, MM:SS-MM:SS, ...' em lista de (start, end).
+    Separadores aceitos: virgula, ponto-e-virgula, newline."""
     clips = []
-    for part in re.split(r"[,;]", timestamps_str):
+    for part in re.split(r"[,;\r\n]+", timestamps_str):
         part = part.strip()
         if not part:
             continue
@@ -107,6 +118,24 @@ def cut_clips(source: Path, timestamps: list[tuple[float, float]], clips_dir: Pa
             clip_files.append(out_path)
             print(f"[cutting] Clip {i:02d} salvo: {out_path.name}", flush=True)
     return clip_files
+
+
+def save_clips_metadata(clips_dir: Path, timestamps: list[tuple[float, float]], descriptions: list[str] | None = None):
+    """Salva metadados dos clips (titulo, timestamps, descricao) em clips_metadata.json."""
+    metadata = {}
+    for i, (start, end) in enumerate(timestamps, 1):
+        clip_name = f"clip_{i:02d}.mp4"
+        entry: dict = {
+            "title": f"Clip {i}",
+            "start": start,
+            "end": end,
+        }
+        if descriptions and i <= len(descriptions) and descriptions[i - 1]:
+            entry["description"] = descriptions[i - 1]
+        metadata[clip_name] = entry
+    meta_path = clips_dir / "clips_metadata.json"
+    meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[metadata] Metadados de {len(metadata)} clips salvos", flush=True)
 
 
 def create_zip(clips_dir: Path) -> Path | None:
@@ -176,23 +205,12 @@ def transcribe_for_viral(audio_path: Path, model: str = "large-v3") -> list[dict
     return results
 
 
-def analyze_viral(
-    segments: list[dict],
-    ollama_model: str,
-    num_clips: int,
-    min_dur: int,
-    max_dur: int,
-    ollama_url: str = "http://localhost:11434",
-) -> list[dict]:
-    """Chama Ollama para identificar os segmentos mais virais."""
-    print(f"[analysis] Analisando com {ollama_model} ({num_clips} clips, {min_dur}-{max_dur}s)...", flush=True)
-
+def _build_prompt(segments: list[dict], num_clips: int, min_dur: int, max_dur: int) -> str:
     transcript_text = "\n".join(
         f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}"
         for seg in segments
     )
-
-    prompt = f"""Analyze this video transcript and identify the {num_clips} most engaging/viral segments.
+    return f"""Analyze this video transcript and identify the {num_clips} most engaging/viral segments.
 
 Requirements:
 - Each clip must be between {min_dur} and {max_dur} seconds long
@@ -209,55 +227,163 @@ Respond ONLY with a valid JSON array (no extra text, no markdown):
   {{"start": 120.0, "end": 195.0, "reason": "Viral moment: ..."}}
 ]"""
 
+
+def _parse_llm_response(content: str, provider: str) -> list[dict]:
+    """Parseia a resposta do LLM extraindo o array JSON."""
+    # JSON direto
+    try:
+        data = json.loads(content)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    # Bloco markdown ```json ... ```
+    m = re.search(r"```(?:json)?\s*(\[[\s\S]*?\])\s*```", content)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except Exception:
+            pass
+    # Array solto na resposta
+    m = re.search(r"\[[\s\S]*\]", content)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            pass
+    raise RuntimeError(f"Nao foi possivel parsear resposta do LLM ({provider}): {content[:300]}")
+
+
+def _call_ollama(prompt: str, model: str, ollama_url: str) -> str:
+    """Chama Ollama com streaming. timeout=None = sem limite (modelo pode demorar horas)."""
     payload = {
-        "model": ollama_model,
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "stream": False,
+        "stream": True,
         "options": {"temperature": 0.3},
     }
-
-    req_data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"{ollama_url}/api/chat",
-        data=req_data,
+        data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    parts = []
+    with urllib.request.urlopen(req, timeout=None) as resp:
+        for raw_line in resp:
+            line = raw_line.decode("utf-8").strip()
+            if not line:
+                continue
+            chunk = json.loads(line)
+            parts.append(chunk.get("message", {}).get("content", ""))
+            if chunk.get("done"):
+                break
+    return "".join(parts)
+
+
+def _call_openai_compat(prompt: str, model: str, api_key: str, base_url: str) -> str:
+    """Chama API compativel com OpenAI (OpenAI, Groq, DeepSeek, Together, Custom) com streaming SSE."""
+    url = f"{base_url.rstrip('/')}/v1/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+        "temperature": 0.3,
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    parts = []
+    with urllib.request.urlopen(req, timeout=None) as resp:
+        for raw_line in resp:
+            line = raw_line.decode("utf-8").strip()
+            if not line or not line.startswith("data:"):
+                continue
+            data_str = line[len("data:"):].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+                delta = chunk["choices"][0].get("delta", {}).get("content", "")
+                if delta:
+                    parts.append(delta)
+            except Exception:
+                continue
+    return "".join(parts)
+
+
+def _call_anthropic(prompt: str, model: str, api_key: str) -> str:
+    """Chama Anthropic API com streaming SSE."""
+    payload = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    parts = []
+    with urllib.request.urlopen(req, timeout=None) as resp:
+        for raw_line in resp:
+            line = raw_line.decode("utf-8").strip()
+            if not line or not line.startswith("data:"):
+                continue
+            try:
+                chunk = json.loads(line[len("data:"):].strip())
+                if chunk.get("type") == "content_block_delta":
+                    parts.append(chunk.get("delta", {}).get("text", ""))
+            except Exception:
+                continue
+    return "".join(parts)
+
+
+def analyze_viral(
+    segments: list[dict],
+    num_clips: int,
+    min_dur: int,
+    max_dur: int,
+    provider: str = "ollama",
+    ollama_model: str = "qwen2.5:7b",
+    ollama_url: str = "http://localhost:11434",
+    llm_model: str = "",
+    llm_api_key: str = "",
+    llm_base_url: str = "",
+) -> list[dict]:
+    """Identifica os segmentos mais virais usando o provider LLM configurado."""
+    model_label = llm_model if provider != "ollama" else ollama_model
+    print(f"[analysis] Analisando com {provider}/{model_label} ({num_clips} clips, {min_dur}-{max_dur}s)...", flush=True)
+
+    prompt = _build_prompt(segments, num_clips, min_dur, max_dur)
 
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            resp_data = json.loads(resp.read().decode("utf-8"))
-            content = resp_data["message"]["content"]
+        if provider == "ollama":
+            content = _call_ollama(prompt, ollama_model, ollama_url)
+        elif provider == "anthropic":
+            content = _call_anthropic(prompt, llm_model, llm_api_key)
+        else:  # openai, groq, deepseek, together, custom
+            base = llm_base_url or PROVIDER_BASE_URLS.get(provider, "")
+            if not base:
+                raise ValueError(f"Base URL nao definida para provider '{provider}'")
+            content = _call_openai_compat(prompt, llm_model, llm_api_key, base)
     except Exception as e:
-        raise RuntimeError(f"Ollama API error: {e}")
+        raise RuntimeError(f"Erro ao chamar {provider}: {e}")
 
     print(f"[analysis] Resposta do LLM recebida ({len(content)} chars)", flush=True)
-
-    # Tentar parsear JSON direto
-    try:
-        clips_data = json.loads(content)
-        if isinstance(clips_data, list):
-            return clips_data
-    except Exception:
-        pass
-
-    # Tentar extrair de bloco markdown
-    match = re.search(r"```(?:json)?\s*(\[[\s\S]*?\])\s*```", content)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except Exception:
-            pass
-
-    # Tentar encontrar array na resposta
-    match = re.search(r"\[[\s\S]*\]", content)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except Exception:
-            pass
-
-    raise RuntimeError(f"Nao foi possivel parsear resposta do Ollama: {content[:300]}")
+    return _parse_llm_response(content, provider)
 
 
 def main():
@@ -272,6 +398,16 @@ def main():
     parser.add_argument("--max-duration", type=int, default=120, dest="max_duration")
     parser.add_argument("--whisper-model", default="large-v3", dest="whisper_model")
     parser.add_argument("--ollama-url", default="http://localhost:11434", dest="ollama_url")
+    # Providers externos
+    parser.add_argument("--llm-provider", default="ollama",
+                        choices=["ollama", "openai", "anthropic", "groq", "deepseek", "together", "openrouter", "custom"],
+                        dest="llm_provider")
+    parser.add_argument("--llm-model", default="", dest="llm_model",
+                        help="Modelo para providers externos (ex: gpt-4o, claude-opus-4-5)")
+    parser.add_argument("--llm-api-key", default="", dest="llm_api_key",
+                        help="API key para providers externos")
+    parser.add_argument("--llm-base-url", default="", dest="llm_base_url",
+                        help="Base URL para provider custom (compativel com OpenAI)")
     args = parser.parse_args()
 
     clips_dir = Path(args.outdir)
@@ -292,9 +428,13 @@ def main():
             # Etapa 2: Cutting
             timestamps = parse_timestamps(args.timestamps)
             if not timestamps:
-                raise ValueError("Nenhum timestamp valido fornecido. Use o formato: 00:30-02:15,05:00-07:30")
+                raise ValueError(
+                    f"Nenhum timestamp valido em: {repr(args.timestamps)!r}. "
+                    "Use o formato: 00:30-02:15,05:00-07:30 (virgula, ponto-e-virgula ou nova linha como separador)"
+                )
             cut_clips(source, timestamps, clips_dir)
             write_checkpoint(workdir, 2, "cutting", "Cortando clips")
+            save_clips_metadata(clips_dir, timestamps)
 
             # Etapa 3: ZIP
             create_zip(clips_dir)
@@ -318,14 +458,19 @@ def main():
             # Etapa 4: Analysis
             viral_clips = analyze_viral(
                 segments,
-                args.ollama_model,
                 args.num_clips,
                 args.min_duration,
                 args.max_duration,
-                args.ollama_url,
+                provider=args.llm_provider,
+                ollama_model=args.ollama_model,
+                ollama_url=args.ollama_url,
+                llm_model=args.llm_model,
+                llm_api_key=args.llm_api_key,
+                llm_base_url=args.llm_base_url,
             )
             print(f"[analysis] {len(viral_clips)} clips identificados:", flush=True)
             timestamps = []
+            descriptions = []
             for c in viral_clips:
                 start = float(c.get("start", 0))
                 end = float(c.get("end", 0))
@@ -333,6 +478,7 @@ def main():
                 print(f"  {start:.1f}s - {end:.1f}s: {reason}", flush=True)
                 if end > start:
                     timestamps.append((start, end))
+                    descriptions.append(reason)
             if not timestamps:
                 raise RuntimeError("Nenhum clip valido retornado pelo LLM")
             write_checkpoint(workdir, 4, "analysis", "Analise viral")
@@ -340,6 +486,7 @@ def main():
             # Etapa 5: Cutting
             cut_clips(source, timestamps, clips_dir)
             write_checkpoint(workdir, 5, "cutting", "Cortando clips")
+            save_clips_metadata(clips_dir, timestamps, descriptions)
 
             # Etapa 6: ZIP
             create_zip(clips_dir)

@@ -31,9 +31,11 @@ async def lifespan(app: FastAPI):
     yield
 
 
+APP_VERSION = "5.3.1"
+
 app = FastAPI(
     title="Dublar v5 API",
-    version="5.2.0",
+    version=APP_VERSION,
     description="API para pipeline de dublagem, corte e transcricao automatica de videos",
     lifespan=lifespan,
 )
@@ -53,6 +55,7 @@ async def system_status():
     """Status completo do sistema (GPU, CPU, RAM, disco)."""
     status = get_system_status()
     status["ollama"] = await get_ollama_status()
+    status["version"] = APP_VERSION
     return status
 
 
@@ -143,6 +146,18 @@ async def create_cut_job_with_upload(
     config["job_type"] = "cutting"
     if "mode" not in config:
         config["mode"] = "manual"
+    job = await job_manager.create_job(config)
+    return job.to_dict()
+
+
+@app.post("/api/jobs/download")
+async def create_download_job(config: dict):
+    """Criar job de download de video (YouTube, TikTok, Instagram, etc.)."""
+    if "url" not in config:
+        raise HTTPException(400, "Campo obrigatorio: url")
+    config["job_type"] = "download"
+    if "quality" not in config:
+        config["quality"] = "best"
     job = await job_manager.create_job(config)
     return job.to_dict()
 
@@ -255,6 +270,29 @@ async def download_job(job_id: str):
     raise HTTPException(404, "Video dublado nao encontrado")
 
 
+@app.get("/api/jobs/{job_id}/download-file")
+async def download_file(job_id: str):
+    """Baixar arquivo de video de um job de download."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job nao encontrado")
+    if job.config.get("job_type") != "download":
+        raise HTTPException(400, "Job nao e do tipo download")
+    if job.status != "completed":
+        raise HTTPException(400, "Job nao concluido")
+
+    dl_dir = job.workdir / "download"
+    if dl_dir.exists():
+        files = list(dl_dir.glob("video.*"))
+        if files:
+            f = files[0]
+            ext = f.suffix.lstrip(".")
+            media_type = "audio/mpeg" if ext == "mp3" else "video/mp4"
+            return FileResponse(f, media_type=media_type, filename=f.name)
+
+    raise HTTPException(404, "Arquivo baixado nao encontrado")
+
+
 @app.get("/api/jobs/{job_id}/subtitles")
 async def download_subtitles(job_id: str, lang: str = "trad"):
     """Baixar legendas (original ou traduzida)."""
@@ -267,6 +305,45 @@ async def download_subtitles(job_id: str, lang: str = "trad"):
     if srt_path.exists():
         return FileResponse(srt_path, media_type="text/plain", filename=srt_name)
     raise HTTPException(404, "Legendas nao encontradas")
+
+
+def _parse_ts_str(s: str) -> float:
+    """Converte 'HH:MM:SS', 'MM:SS' ou 'SS' para segundos."""
+    parts = s.strip().split(":")
+    if len(parts) == 1:
+        return float(parts[0])
+    elif len(parts) == 2:
+        return int(parts[0]) * 60 + float(parts[1])
+    return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+
+
+def _build_clips_metadata(config: dict, clips_dir: Path) -> dict:
+    """Gera clips_metadata.json a partir da config do job (retroativo)."""
+    import re
+    metadata = {}
+    mode = config.get("mode", "manual")
+
+    if mode == "manual" and config.get("timestamps"):
+        timestamps = []
+        for part in re.split(r"[,;\r\n]+", str(config["timestamps"])):
+            part = part.strip()
+            m = re.match(r"^([\d:]+)\s*-\s*([\d:]+)$", part)
+            if m:
+                try:
+                    start = _parse_ts_str(m.group(1))
+                    end = _parse_ts_str(m.group(2))
+                    if end > start:
+                        timestamps.append((start, end))
+                except Exception:
+                    pass
+        for i, (start, end) in enumerate(timestamps, 1):
+            metadata[f"clip_{i:02d}.mp4"] = {"title": f"Clip {i}", "start": start, "end": end}
+    else:
+        # Viral ou sem timestamps: titulo pelo indice
+        for i, clip in enumerate(sorted(clips_dir.glob("clip_*.mp4")), 1):
+            metadata[clip.name] = {"title": f"Clip {i}"}
+
+    return metadata
 
 
 @app.get("/api/jobs/{job_id}/clips")
@@ -282,12 +359,32 @@ async def list_clips(job_id: str):
     if not clips_dir.exists():
         return []
 
+    # Carrega metadados; gera e salva on-the-fly se nao existir (retroativo)
+    meta_path = clips_dir / "clips_metadata.json"
+    metadata = {}
+    if meta_path.exists():
+        try:
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    else:
+        metadata = _build_clips_metadata(job.config, clips_dir)
+        try:
+            meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
     clips = []
     for clip in sorted(clips_dir.glob("clip_*.mp4")):
+        clip_meta = metadata.get(clip.name, {})
         clips.append({
             "name": clip.name,
             "size_bytes": clip.stat().st_size,
             "url": f"/api/jobs/{job_id}/clips/{clip.name}",
+            "title": clip_meta.get("title", clip.name),
+            "description": clip_meta.get("description"),
+            "start": clip_meta.get("start"),
+            "end": clip_meta.get("end"),
         })
     return clips
 
@@ -324,6 +421,144 @@ async def download_clip(job_id: str, clip_name: str):
     return FileResponse(clip_path, media_type="video/mp4", filename=clip_name)
 
 
+def _build_transcript_summary(job) -> dict:
+    """Gera transcript_summary.json a partir dos arquivos existentes (retroativo)."""
+    transcript_dir = job.workdir / "transcription"
+    config = job.config
+    input_val = config.get("input", "")
+
+    # Titulo: info.json do yt-dlp ou nome do arquivo
+    title = ""
+    info_path = job.workdir / "dub_work" / "source.info.json"
+    if info_path.exists():
+        try:
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+            title = str(info.get("title", "") or "")
+        except Exception:
+            pass
+    if not title and not input_val.startswith("http"):
+        title = Path(input_val).stem
+
+    # Descricao: ler transcript.json ou transcript.txt
+    segments = []
+    json_path = transcript_dir / "transcript.json"
+    if json_path.exists():
+        try:
+            segments = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    if segments:
+        full_text = " ".join(seg.get("text", "") for seg in segments)
+        duration_s = round(float(segments[-1].get("end", 0)), 1) if segments else 0
+    else:
+        # Fallback: ler txt
+        txt_path = transcript_dir / "transcript.txt"
+        full_text = ""
+        if txt_path.exists():
+            try:
+                full_text = txt_path.read_text(encoding="utf-8")
+            except Exception:
+                pass
+        duration_s = 0
+
+    description = full_text[:500].strip()
+    if len(full_text) > 500:
+        last_space = description.rfind(" ")
+        if last_space > 0:
+            description = description[:last_space] + "..."
+
+    return {
+        "title": title,
+        "description": description,
+        "total_segments": len(segments),
+        "duration_s": duration_s,
+    }
+
+
+@app.get("/api/jobs/{job_id}/transcript-summary")
+async def get_transcript_summary(job_id: str):
+    """Retorna titulo e descricao (preview) da transcricao. Gera on-the-fly para jobs antigos."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job nao encontrado")
+
+    summary_path = job.workdir / "transcription" / "transcript_summary.json"
+    if summary_path.exists():
+        try:
+            return json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # Gerar retroativamente a partir dos arquivos existentes
+    transcript_dir = job.workdir / "transcription"
+    if not transcript_dir.exists():
+        return {"title": "", "description": "", "total_segments": 0, "duration_s": 0}
+
+    result = _build_transcript_summary(job)
+
+    # Salvar para proximas chamadas
+    try:
+        summary_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+    return result
+
+
+@app.get("/api/jobs/{job_id}/video-summary")
+async def get_video_summary(job_id: str):
+    """Retorna titulo e descricao do video para jobs de dublagem."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job nao encontrado")
+
+    config = job.config
+    input_val = config.get("input", "")
+
+    # Derivar titulo do input
+    title = ""
+    info_path = job.workdir / "dub_work" / "source.info.json"
+    if info_path.exists():
+        try:
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+            title = str(info.get("title", "") or "")
+        except Exception:
+            pass
+    if not title:
+        if not input_val.startswith("http"):
+            title = Path(input_val).stem
+        else:
+            title = input_val
+
+    # Derivar descricao das legendas traduzidas (primeiros segmentos)
+    description = ""
+    for srt_name in ["asr_trad.srt", "asr.srt"]:
+        srt_path = job.workdir / "dub_work" / srt_name
+        if srt_path.exists():
+            try:
+                srt_text = srt_path.read_text(encoding="utf-8")
+                lines = []
+                for line in srt_text.splitlines():
+                    line = line.strip()
+                    if not line or line.isdigit() or "-->" in line:
+                        continue
+                    lines.append(line)
+                    if sum(len(l) for l in lines) > 450:
+                        break
+                full = " ".join(lines)
+                description = full[:450].strip()
+                if len(full) > 450:
+                    last_space = description.rfind(" ")
+                    if last_space > 0:
+                        description = description[:last_space] + "..."
+            except Exception:
+                pass
+            break
+
+    return {"title": title, "description": description}
+
+
 @app.get("/api/jobs/{job_id}/transcript")
 async def download_transcript(job_id: str, format: str = "srt"):
     """Download da transcricao em diferentes formatos (srt, txt, json)."""
@@ -348,12 +583,28 @@ async def download_transcript(job_id: str, format: str = "srt"):
     )
 
 
-@app.delete("/api/jobs/{job_id}")
-async def cancel_job(job_id: str):
-    """Cancelar ou remover job."""
+@app.post("/api/jobs/{job_id}/retry")
+async def retry_job(job_id: str):
+    """Cria um novo job com a mesma config de um job falho/cancelado."""
     job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(404, "Job nao encontrado")
+    if job.status not in ("failed", "cancelled"):
+        raise HTTPException(400, f"Somente jobs failed/cancelled podem ser re-tentados (status atual: {job.status})")
+    new_job = await job_manager.create_job(dict(job.config))
+    return {"id": new_job.id, "status": new_job.status}
+
+
+@app.delete("/api/jobs/{job_id}")
+async def cancel_job(job_id: str, delete: bool = False):
+    """Cancelar job (running/queued). Com ?delete=true, remove arquivos e entrada."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job nao encontrado")
+
+    if delete:
+        ok = await job_manager.delete_job(job_id)
+        return {"status": "deleted" if ok else "not_found"}
 
     if job.status == "running":
         await job_manager.cancel_job(job_id)
@@ -402,7 +653,7 @@ async def pipeline_stats():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "5.2.0"}
+    return {"status": "ok", "version": APP_VERSION}
 
 
 if __name__ == "__main__":

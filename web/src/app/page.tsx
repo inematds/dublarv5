@@ -63,29 +63,9 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-gray-400 mt-1">Monitor do sistema e jobs</p>
-        </div>
-        {/* Action cards */}
-        <div className="flex gap-3">
-          <a href="/new"
-            className="flex flex-col items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors text-center">
-            <span className="text-lg">🎙</span>
-            <span className="text-sm">Dublar</span>
-          </a>
-          <a href="/cut"
-            className="flex flex-col items-center gap-1 bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors text-center">
-            <span className="text-lg">✂</span>
-            <span className="text-sm">Cortar</span>
-          </a>
-          <a href="/transcribe"
-            className="flex flex-col items-center gap-1 bg-purple-600 hover:bg-purple-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors text-center">
-            <span className="text-lg">📝</span>
-            <span className="text-sm">Transcrever</span>
-          </a>
-        </div>
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold">Dashboard</h1>
+        <p className="text-gray-400 mt-1">Monitor do sistema e jobs</p>
       </div>
 
       {error && (

@@ -46,6 +46,11 @@ STAGES_TRANSCRIPTION = [
     {"num": 4, "id": "export", "name": "Exportando legendas", "icon": "💾"},
 ]
 
+# Stages para jobs de download (1 etapa)
+STAGES_DOWNLOAD = [
+    {"num": 1, "id": "download", "name": "Baixando video", "icon": "⬇"},
+]
+
 
 def _detect_docker_gpu() -> bool:
     """Verifica se a imagem Docker GPU existe e Docker esta disponivel."""
@@ -115,10 +120,39 @@ class Job:
             return STAGES_CUT_VIRAL if mode == "viral" else STAGES_CUT_MANUAL
         elif job_type == "transcription":
             return STAGES_TRANSCRIPTION
+        elif job_type == "download":
+            return STAGES_DOWNLOAD
         else:
             return STAGES
 
+    def _recover_if_output_exists(self):
+        """Se marcado como failed mas arquivos de saida existem, recuperar para completed."""
+        if self.status != "failed":
+            return
+        job_type = self.config.get("job_type", "dubbing")
+        if job_type == "transcription":
+            td = self.workdir / "transcription"
+            if td.exists() and any(td.glob("transcript.*")):
+                self.status = "completed"
+                self.error = None
+        elif job_type == "cutting":
+            cd = self.workdir / "clips"
+            if cd.exists() and any(cd.glob("clip_*.mp4")):
+                self.status = "completed"
+                self.error = None
+        elif job_type == "download":
+            dd = self.workdir / "download"
+            if dd.exists() and any(dd.glob("video.*")):
+                self.status = "completed"
+                self.error = None
+        else:
+            dd = self.workdir / "dublado"
+            if dd.exists() and any(dd.glob("*.mp4")):
+                self.status = "completed"
+                self.error = None
+
     def to_dict(self) -> dict:
+        self._recover_if_output_exists()
         checkpoint = self._read_checkpoint()
         progress = self._calc_progress(checkpoint)
         return {
@@ -385,6 +419,11 @@ class JobManager:
                     if transcript_dir.exists() and any(transcript_dir.glob("transcript.*")):
                         existing.status = "completed"
                         existing.error = None
+                elif existing_type == "download":
+                    dl_dir = job_dir / "download"
+                    if dl_dir.exists() and any(dl_dir.glob("video.*")):
+                        existing.status = "completed"
+                        existing.error = None
                 else:
                     dublado_dir = job_dir / "dublado"
                     if dublado_dir.exists() and any(dublado_dir.glob("*.mp4")):
@@ -431,6 +470,9 @@ class JobManager:
                     has_output = transcript_dir.exists() and any(
                         transcript_dir.glob("transcript.*")
                     )
+                elif job_type == "download":
+                    dl_dir = job_dir / "download"
+                    has_output = dl_dir.exists() and any(dl_dir.glob("video.*"))
                 else:
                     dublado_dir = job_dir / "dublado"
                     has_output = dublado_dir.exists() and any(dublado_dir.glob("*.mp4"))
@@ -479,6 +521,8 @@ class JobManager:
             (job.workdir / "clips").mkdir(exist_ok=True)
         elif job_type == "transcription":
             (job.workdir / "transcription").mkdir(exist_ok=True)
+        elif job_type == "download":
+            (job.workdir / "download").mkdir(exist_ok=True)
         else:
             (job.workdir / "dublado").mkdir(exist_ok=True)
 
@@ -502,6 +546,8 @@ class JobManager:
                 cmd = self._build_docker_cut_command(job)
             elif job_type == "transcription":
                 cmd = self._build_docker_transcribe_command(job)
+            elif job_type == "download":
+                cmd = self._build_docker_download_command(job)
             else:
                 cmd = self._build_docker_command(job)
         else:
@@ -509,6 +555,8 @@ class JobManager:
                 cmd = self._build_local_cut_command(job)
             elif job_type == "transcription":
                 cmd = self._build_local_transcribe_command(job)
+            elif job_type == "download":
+                cmd = self._build_local_download_command(job)
             else:
                 cmd = self._build_local_command(job)
 
@@ -644,6 +692,15 @@ class JobManager:
                 cmd.extend(["--max-duration", str(config["max_duration"])])
             if config.get("whisper_model"):
                 cmd.extend(["--whisper-model", config["whisper_model"]])
+            # Providers externos
+            if config.get("llm_provider") and config["llm_provider"] != "ollama":
+                cmd.extend(["--llm-provider", config["llm_provider"]])
+            if config.get("llm_model"):
+                cmd.extend(["--llm-model", config["llm_model"]])
+            if config.get("llm_api_key"):
+                cmd.extend(["--llm-api-key", config["llm_api_key"]])
+            if config.get("llm_base_url"):
+                cmd.extend(["--llm-base-url", config["llm_base_url"]])
 
         return cmd
 
@@ -670,6 +727,15 @@ class JobManager:
                 cmd.extend(["--max-duration", str(config["max_duration"])])
             if config.get("whisper_model"):
                 cmd.extend(["--whisper-model", config["whisper_model"]])
+            # Providers externos
+            if config.get("llm_provider") and config["llm_provider"] != "ollama":
+                cmd.extend(["--llm-provider", config["llm_provider"]])
+            if config.get("llm_model"):
+                cmd.extend(["--llm-model", config["llm_model"]])
+            if config.get("llm_api_key"):
+                cmd.extend(["--llm-api-key", config["llm_api_key"]])
+            if config.get("llm_base_url"):
+                cmd.extend(["--llm-base-url", config["llm_base_url"]])
 
         return cmd
 
@@ -736,6 +802,51 @@ class JobManager:
             cmd.extend(["--whisper-model", config["whisper_model"]])
         if config.get("src_lang"):
             cmd.extend(["--src", config["src_lang"]])
+
+        return cmd
+
+    def _build_docker_download_command(self, job: Job) -> list:
+        """Monta comando Docker para download de video."""
+        config = job.config
+        workdir_abs = str(job.workdir.resolve())
+        script_path = str(PROJECT_DIR / "baixar_v1.py")
+
+        cmd = [
+            "docker", "run", "--rm",
+            "--gpus", "all",
+            "--ipc=host",
+            "--name", f"dublarv5-{job.id}",
+            "--ulimit", "memlock=-1",
+            "--ulimit", "stack=67108864",
+            "--network", "host",
+            "-v", f"{script_path}:/app/baixar_v1.py:ro",
+            "-v", f"{workdir_abs}/dub_work:/app/dub_work",
+            "-v", f"{workdir_abs}/download:/app/download",
+            "--entrypoint", "python",
+            DOCKER_GPU_IMAGE,
+            "/app/baixar_v1.py",
+            "--url", config["url"],
+            "--outdir", "/app/download",
+        ]
+
+        if config.get("quality"):
+            cmd.extend(["--quality", config["quality"]])
+
+        return cmd
+
+    def _build_local_download_command(self, job: Job) -> list:
+        """Monta comando local para download de video."""
+        config = job.config
+        script_path = str(PROJECT_DIR / "baixar_v1.py")
+
+        cmd = [
+            PYTHON_BIN, script_path,
+            "--url", config["url"],
+            "--outdir", str(job.workdir.resolve() / "download"),
+        ]
+
+        if config.get("quality"):
+            cmd.extend(["--quality", config["quality"]])
 
         return cmd
 
@@ -910,6 +1021,27 @@ class JobManager:
             await self._notify(job_id, {"event": "cancelled", "job": job.to_dict()})
             return True
         return False
+
+    async def delete_job(self, job_id: str) -> bool:
+        """Cancela (se rodando/na fila) e deleta arquivos + entrada do job."""
+        job = self.jobs.get(job_id)
+        if not job:
+            return False
+        # Cancelar processo se ativo
+        if job.status == "running" and job.process and job.process.poll() is None:
+            job.process.terminate()
+            try:
+                job.process.wait(timeout=5)
+            except Exception:
+                job.process.kill()
+        # Remover da fila se queued
+        job.status = "deleted"
+        # Deletar arquivos do disco
+        if job.workdir.exists():
+            shutil.rmtree(job.workdir, ignore_errors=True)
+        # Remover da memória
+        self.jobs.pop(job_id, None)
+        return True
 
     def get_job(self, job_id: str) -> Optional[Job]:
         return self.jobs.get(job_id)

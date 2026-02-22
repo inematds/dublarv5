@@ -130,6 +130,10 @@ export async function createCutJobWithUpload(
   });
 }
 
+export async function createDownloadJob(config: Record<string, unknown>) {
+  return fetchApi("/api/jobs/download", { method: "POST", body: JSON.stringify(config) });
+}
+
 export async function createTranscriptionJob(config: Record<string, unknown>) {
   return fetchApi("/api/jobs/transcribe", { method: "POST", body: JSON.stringify(config) });
 }
@@ -190,6 +194,14 @@ export async function cancelJob(jobId: string) {
   return fetchApi(`/api/jobs/${jobId}`, { method: "DELETE" });
 }
 
+export async function retryJob(jobId: string) {
+  return fetchApi(`/api/jobs/${jobId}/retry`, { method: "POST" });
+}
+
+export async function deleteJob(jobId: string) {
+  return fetchApi(`/api/jobs/${jobId}?delete=true`, { method: "DELETE" });
+}
+
 export function getDownloadUrl(jobId: string) {
   return `${API_BASE}/api/jobs/${jobId}/download`;
 }
@@ -212,6 +224,18 @@ export function getClipsZipUrl(jobId: string) {
 
 export function getTranscriptUrl(jobId: string, format: "srt" | "txt" | "json" = "srt") {
   return `${API_BASE}/api/jobs/${jobId}/transcript?format=${format}`;
+}
+
+export async function getTranscriptSummary(jobId: string) {
+  return fetchApi(`/api/jobs/${jobId}/transcript-summary`);
+}
+
+export async function getVideoSummary(jobId: string) {
+  return fetchApi(`/api/jobs/${jobId}/video-summary`);
+}
+
+export function getDownloadFileUrl(jobId: string) {
+  return `${API_BASE}/api/jobs/${jobId}/download-file`;
 }
 
 export function createJobWebSocket(jobId: string): WebSocket {

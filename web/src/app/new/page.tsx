@@ -91,6 +91,7 @@ export default function NewJob() {
   const router = useRouter();
   const [options, setOptions] = useState<Options | null>(null);
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Form state
@@ -188,6 +189,7 @@ export default function NewJob() {
     e.preventDefault();
     if (!input && !uploadFile) return;
     setLoading(true);
+    setUploadProgress(null);
     setError(null);
 
     try {
@@ -217,12 +219,13 @@ export default function NewJob() {
       if (tolerance !== undefined) config.tolerance = Number(tolerance);
 
       const job = uploadFile
-        ? await createJobWithUpload(uploadFile, config)
+        ? await createJobWithUpload(uploadFile, config, (p) => setUploadProgress(p))
         : await createJob(config);
       router.push(`/jobs/${job.id}`);
     } catch (err) {
       setError(String(err));
       setLoading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -796,11 +799,25 @@ export default function NewJob() {
         </section>
 
         {/* Submit */}
-        <button type="submit" disabled={loading || !input}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed
-            text-white px-6 py-3 rounded-lg font-medium text-lg transition-colors">
-          {loading ? "Iniciando..." : "Iniciar Dublagem"}
-        </button>
+        <div className="space-y-2">
+          <button type="submit" disabled={loading || (!input && !uploadFile)}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed
+              text-white px-6 py-3 rounded-lg font-medium text-lg transition-colors">
+            {loading
+              ? uploadProgress !== null
+                ? `Enviando... ${uploadProgress}%`
+                : "Iniciando..."
+              : "Iniciar Dublagem"}
+          </button>
+          {loading && uploadProgress !== null && (
+            <div className="w-full bg-gray-700 rounded-full h-2">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+          )}
+        </div>
       </form>
     </div>
   );

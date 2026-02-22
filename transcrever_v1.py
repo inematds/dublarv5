@@ -29,9 +29,13 @@ def download_input(input_val: str, workdir: Path) -> Path:
         print(f"[download] Baixando: {input_val}", flush=True)
         out_template = workdir / "dub_work" / "source.%(ext)s"
         cmd = [
-            "yt-dlp", "-f", "bestaudio/best",
+            "yt-dlp",
+            # Preferencia: melhor audio isolado -> melhor com acodec -> qualquer formato
+            # acodec!=none garante que o arquivo tenha audio (evita video-only como bytevc1)
+            "-f", "bestaudio[ext=m4a]/bestaudio/best[acodec!=none]/best",
             "--output", str(out_template),
             "--no-playlist",
+            "--write-info-json",
             input_val,
         ]
         result = subprocess.run(cmd, capture_output=False)
@@ -53,13 +57,30 @@ def extract_audio(source: Path, workdir: Path) -> Path:
     """Extrai audio do video como WAV mono 16kHz."""
     print("[extraction] Extraindo audio...", flush=True)
     audio_path = workdir / "dub_work" / "audio.wav"
+
+    # Tentar com -vn (descarta video, extrai audio)
     cmd = [
         "ffmpeg", "-y", "-i", str(source),
         "-ac", "1", "-ar", "16000", "-vn",
         str(audio_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
+
     if result.returncode != 0:
+        # Fallback: arquivo pode ser audio puro (m4a, mp3, opus) sem stream de video
+        # Nesse caso remover -vn e converter direto
+        if "does not contain any stream" in result.stderr or "Invalid argument" in result.stderr:
+            print("[extraction] Sem stream de video detectado, convertendo como audio puro...", flush=True)
+            cmd2 = [
+                "ffmpeg", "-y", "-i", str(source),
+                "-ac", "1", "-ar", "16000",
+                str(audio_path),
+            ]
+            result2 = subprocess.run(cmd2, capture_output=True, text=True)
+            if result2.returncode != 0:
+                raise RuntimeError(f"ffmpeg falhou (audio puro): {result2.stderr[-500:]}")
+            return audio_path
+
         raise RuntimeError(f"ffmpeg falhou: {result.stderr[-500:]}")
     return audio_path
 
@@ -111,6 +132,41 @@ def seconds_to_srt_time(s: float) -> str:
     sec = int(s % 60)
     ms = int((s % 1) * 1000)
     return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+
+
+def get_video_title(workdir: Path, input_val: str) -> str:
+    """Tenta obter o titulo do video da info JSON do yt-dlp ou do nome do arquivo."""
+    info_json = workdir / "dub_work" / "source.info.json"
+    if info_json.exists():
+        try:
+            info = json.loads(info_json.read_text(encoding="utf-8"))
+            return str(info.get("title", "") or "")
+        except Exception:
+            pass
+    if not input_val.startswith("http"):
+        return Path(input_val).stem
+    return ""
+
+
+def save_transcript_summary(segments: list[dict], outdir: Path, title: str = ""):
+    """Salva um JSON com titulo e descricao (preview do texto) da transcricao."""
+    full_text = " ".join(seg["text"] for seg in segments)
+    description = full_text[:500].strip()
+    if len(full_text) > 500:
+        last_space = description.rfind(" ")
+        if last_space > 0:
+            description = description[:last_space] + "..."
+    duration_s = segments[-1]["end"] if segments else 0
+    summary = {
+        "title": title,
+        "description": description,
+        "total_segments": len(segments),
+        "duration_s": round(duration_s, 1),
+    }
+    (outdir / "transcript_summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    print(f"[summary] Resumo salvo: titulo='{title}'", flush=True)
 
 
 def export_transcription(segments: list[dict], outdir: Path):
@@ -176,6 +232,8 @@ def main():
 
         # Etapa 4: Export
         export_transcription(segments, outdir)
+        title = get_video_title(workdir, args.input)
+        save_transcript_summary(segments, outdir, title)
         write_checkpoint(workdir, 4, "export", "Exportando legendas")
 
         print("[done] Transcricao concluida com sucesso!", flush=True)

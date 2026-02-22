@@ -8,7 +8,15 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     rubberband-cli \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Deno runtime (necessario para yt-dlp extrair YouTube corretamente)
+RUN curl -fsSL -L https://github.com/denoland/deno/releases/latest/download/deno-aarch64-unknown-linux-gnu.zip -o /tmp/deno.zip \
+    && unzip /tmp/deno.zip -d /usr/local/bin/ \
+    && chmod +x /usr/local/bin/deno \
+    && rm /tmp/deno.zip \
+    && deno --version
 
 # Salvar versao do PyTorch NVIDIA antes de instalar deps
 # (pip pode sobrescrever com versao CPU)
@@ -24,7 +32,7 @@ RUN pip install --no-cache-dir \
     httpx>=0.24.0 \
     scipy>=1.10.0 \
     soundfile>=0.12.0 \
-    yt-dlp>=2023.0.0 \
+    yt-dlp \
     Pillow>=10.0.0 \
     librosa>=0.10.0
 

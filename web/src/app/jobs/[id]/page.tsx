@@ -3,9 +3,11 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import {
-  getJob, getJobLogs, cancelJob,
+  getJob, getJobLogs, cancelJob, deleteJob, retryJob,
   getDownloadUrl, getSubtitlesUrl,
   getClips, getClipUrl, getClipsZipUrl, getTranscriptUrl,
+  getTranscriptSummary, getVideoSummary,
+  getDownloadFileUrl,
   createJobWebSocket,
 } from "@/lib/api";
 
@@ -19,7 +21,8 @@ type StageInfo = {
   status: string; time?: number; elapsed?: number; estimate?: number; tool?: string;
   log_progress?: LogProgress;
 };
-type ClipInfo = { name: string; size_bytes: number; url: string };
+type ClipInfo = { name: string; size_bytes: number; url: string; title?: string; description?: string; start?: number; end?: number };
+type VideoSummary = { title: string; description: string };
 
 function formatTime(seconds: number | undefined | null): string {
   if (!seconds || seconds <= 0) return "-";
@@ -34,6 +37,12 @@ function formatTime(seconds: number | undefined | null): string {
   return `${h}h${m}m`;
 }
 
+function formatTimecode(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
@@ -46,8 +55,12 @@ export default function JobDetail() {
   const [job, setJob] = useState<JobData | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [clips, setClips] = useState<ClipInfo[]>([]);
+  const [playingClip, setPlayingClip] = useState<string | null>(null);
+  const [videoSummary, setVideoSummary] = useState<VideoSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -74,14 +87,22 @@ export default function JobDetail() {
   }, [fetchJob, fetchLogs]);
 
   useEffect(() => {
-    if (job) {
+    if (job && job.status === "completed") {
       const config = (job.config || {}) as Record<string, unknown>;
       const jobType = String(config.job_type || "dubbing");
-      if (job.status === "completed" && jobType === "cutting") {
-        fetchClips(jobType);
+      if (jobType === "cutting") fetchClips(jobType);
+      if (jobType === "transcription") {
+        getTranscriptSummary(jobId)
+          .then((d) => setVideoSummary(d as VideoSummary))
+          .catch(() => {});
+      }
+      if (jobType === "dubbing") {
+        getVideoSummary(jobId)
+          .then((d) => setVideoSummary(d as VideoSummary))
+          .catch(() => {});
       }
     }
-  }, [job, fetchClips]);
+  }, [job, fetchClips, jobId]);
 
   useEffect(() => {
     try {
@@ -107,6 +128,29 @@ export default function JobDetail() {
     setCancelling(true);
     try { await cancelJob(jobId); fetchJob(); } catch { setError("Erro ao cancelar"); }
     setCancelling(false);
+  };
+
+  const handleDelete = async () => {
+    if (!confirm(`Excluir job ${jobId} e todos os arquivos? Esta ação não pode ser desfeita.`)) return;
+    setDeleting(true);
+    try {
+      await deleteJob(jobId);
+      window.location.href = "/jobs";
+    } catch {
+      setError("Erro ao excluir job");
+      setDeleting(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      const newJob = await retryJob(jobId) as Record<string, unknown>;
+      window.location.href = `/jobs/${newJob.id}`;
+    } catch {
+      setError("Erro ao re-tentar job");
+      setRetrying(false);
+    }
   };
 
   if (!job && !error) {
@@ -147,6 +191,7 @@ export default function JobDetail() {
     dubbing: { label: "Dublagem", className: "bg-blue-500/20 text-blue-400 border border-blue-500/30" },
     cutting: { label: "Corte", className: "bg-orange-500/20 text-orange-400 border border-orange-500/30" },
     transcription: { label: "Transcricao", className: "bg-purple-500/20 text-purple-400 border border-purple-500/30" },
+    download: { label: "Download", className: "bg-green-500/20 text-green-400 border border-green-500/30" },
   };
   const jtl = jobTypeLabels[jobType] || jobTypeLabels.dubbing;
 
@@ -188,6 +233,11 @@ export default function JobDetail() {
                 <span className="mx-2">|</span>ASR: {String(config.asr_engine || "whisper")}
               </>
             )}
+            {jobType === "download" && (
+              <>
+                <span className="mx-2">|</span>Qualidade: {String(config.quality || "best")}
+              </>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -195,6 +245,18 @@ export default function JobDetail() {
             <button onClick={handleCancel} disabled={cancelling}
               className="bg-red-600 hover:bg-red-700 disabled:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm transition-colors">
               {cancelling ? "Cancelando..." : "Cancelar"}
+            </button>
+          )}
+          {(status === "failed" || status === "cancelled") && (
+            <button onClick={handleRetry} disabled={retrying}
+              className="bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-400 px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+              {retrying ? "Iniciando..." : "↺ Re-tentar"}
+            </button>
+          )}
+          {!isActive && (
+            <button onClick={handleDelete} disabled={deleting}
+              className="bg-gray-800 hover:bg-red-900/50 hover:border-red-800 border border-gray-700 text-gray-400 hover:text-red-400 px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+              {deleting ? "Excluindo..." : "🗑 Excluir"}
             </button>
           )}
           <a href="/jobs" className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm transition-colors">
@@ -307,6 +369,16 @@ export default function JobDetail() {
       {isCompleted && jobType === "dubbing" && (
         <section className="border border-green-500/30 bg-green-500/5 rounded-lg p-5 mb-6">
           <h2 className="text-lg font-semibold text-green-400 mb-4">Resultado</h2>
+          {videoSummary && (videoSummary.title || videoSummary.description) && (
+            <div className="mb-4 pb-4 border-b border-green-500/20">
+              {videoSummary.title && (
+                <h3 className="text-base font-semibold text-white mb-1">{videoSummary.title}</h3>
+              )}
+              {videoSummary.description && (
+                <p className="text-sm text-gray-400 leading-relaxed">{videoSummary.description}</p>
+              )}
+            </div>
+          )}
           <div className="bg-black rounded-lg overflow-hidden mb-4">
             <video controls className="w-full" src={getDownloadUrl(jobId)}>
               Seu navegador nao suporta video.
@@ -346,18 +418,73 @@ export default function JobDetail() {
           {clips.length === 0 ? (
             <p className="text-gray-500 text-sm">Carregando clips...</p>
           ) : (
-            <div className="space-y-2 mb-4">
-              {clips.map((clip) => (
-                <div key={clip.name} className="flex items-center gap-3 bg-gray-900 rounded-lg px-4 py-3">
-                  <span className="text-orange-400">✂</span>
-                  <span className="flex-1 font-mono text-sm">{clip.name}</span>
-                  <span className="text-xs text-gray-500">{formatSize(clip.size_bytes)}</span>
-                  <a href={getClipUrl(jobId, clip.name)} download
-                    className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1 rounded text-xs font-medium transition-colors">
-                    Download
-                  </a>
+            <div className="mb-4">
+              {/* Player inline */}
+              {playingClip && (
+                <div className="mb-4 bg-black rounded-lg overflow-hidden border border-orange-500/30">
+                  <div className="flex items-center justify-between px-3 py-2 bg-gray-900/80">
+                    <span className="text-sm font-mono text-orange-300">{playingClip}</span>
+                    <button
+                      onClick={() => setPlayingClip(null)}
+                      className="text-gray-500 hover:text-white text-lg leading-none transition-colors"
+                      title="Fechar player"
+                    >✕</button>
+                  </div>
+                  <video
+                    key={playingClip}
+                    src={getClipUrl(jobId, playingClip)}
+                    controls
+                    autoPlay
+                    className="w-full max-h-[480px]"
+                  />
                 </div>
-              ))}
+              )}
+
+              {/* Lista de clips */}
+              <div className="space-y-2">
+                {clips.map((clip) => {
+                  const isPlaying = playingClip === clip.name;
+                  return (
+                    <div key={clip.name}
+                      className={`rounded-lg px-4 py-3 transition-colors border ${
+                        isPlaying ? "bg-orange-500/10 border-orange-500/30" : "bg-gray-900 border-gray-800"
+                      }`}>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => setPlayingClip(isPlaying ? null : clip.name)}
+                          className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${
+                            isPlaying
+                              ? "bg-orange-500 text-white"
+                              : "bg-gray-700 hover:bg-orange-600 text-gray-300 hover:text-white"
+                          }`}
+                          title={isPlaying ? "Parar" : "Play"}
+                        >
+                          {isPlaying ? "■" : "▶"}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <div className={`font-medium text-sm ${isPlaying ? "text-orange-300" : "text-white"}`}>
+                            {clip.title || clip.name}
+                          </div>
+                          {clip.start != null && clip.end != null && (
+                            <div className="text-xs text-gray-500 font-mono">
+                              {formatTimecode(clip.start)} → {formatTimecode(clip.end)}
+                              <span className="ml-2 text-gray-600">({formatTime(clip.end - clip.start)})</span>
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-xs text-gray-500 flex-shrink-0">{formatSize(clip.size_bytes)}</span>
+                        <a href={getClipUrl(jobId, clip.name)} download
+                          className="bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1 rounded text-xs font-medium transition-colors flex-shrink-0">
+                          ⬇ Download
+                        </a>
+                      </div>
+                      {clip.description && (
+                        <p className="mt-2 ml-11 text-xs text-gray-400 leading-relaxed">{clip.description}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -373,10 +500,41 @@ export default function JobDetail() {
         </section>
       )}
 
+      {/* Results - Download */}
+      {isCompleted && jobType === "download" && (
+        <section className="border border-green-500/30 bg-green-500/5 rounded-lg p-5 mb-6">
+          <h2 className="text-lg font-semibold text-green-400 mb-4">Video Baixado</h2>
+          <div className="bg-black rounded-lg overflow-hidden mb-4">
+            <video controls className="w-full" src={getDownloadFileUrl(jobId)}>
+              Seu navegador nao suporta video.
+            </video>
+          </div>
+          <a href={getDownloadFileUrl(jobId)} download
+            className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+            ⬇ Download
+          </a>
+          {!!job?.duration_s && (
+            <div className="mt-4 text-sm text-gray-400">
+              Tempo total: <span className="text-white">{formatTime(Number(job.duration_s))}</span>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Results - Transcription */}
       {isCompleted && jobType === "transcription" && (
         <section className="border border-purple-500/30 bg-purple-500/5 rounded-lg p-5 mb-6">
           <h2 className="text-lg font-semibold text-purple-400 mb-4">Transcricao</h2>
+          {videoSummary && (videoSummary.title || videoSummary.description) && (
+            <div className="mb-4 pb-4 border-b border-purple-500/20">
+              {videoSummary.title && (
+                <h3 className="text-base font-semibold text-white mb-1">{videoSummary.title}</h3>
+              )}
+              {videoSummary.description && (
+                <p className="text-sm text-gray-400 leading-relaxed">{videoSummary.description}</p>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-3">
             <a href={getTranscriptUrl(jobId, "srt")} download
               className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
@@ -404,9 +562,11 @@ export default function JobDetail() {
       {/* Config */}
       <section className="border border-gray-800 rounded-lg p-5 mb-6">
         <h2 className="text-lg font-semibold mb-3">Configuracao</h2>
-        <div className="text-sm mb-3">
-          <span className="text-gray-500">Input:</span> <span className="text-gray-300 break-all">{String(config.input || "-")}</span>
-        </div>
+        {jobType !== "download" && (
+          <div className="text-sm mb-3">
+            <span className="text-gray-500">Input:</span> <span className="text-gray-300 break-all">{String(config.input || "-")}</span>
+          </div>
+        )}
         {jobType === "dubbing" && (
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div><span className="text-gray-500">Idiomas:</span> {String(config.src_lang || "auto")} → {String(config.tgt_lang || "pt")}</div>
@@ -431,8 +591,8 @@ export default function JobDetail() {
         {jobType === "cutting" && (
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div><span className="text-gray-500">Modo:</span> {String(config.mode || "manual")}</div>
-            {config.mode === "manual" && config.timestamps && (
-              <div className="col-span-2"><span className="text-gray-500">Timestamps:</span> <code className="bg-gray-800 px-1 rounded">{String(config.timestamps)}</code></div>
+            {config.mode === "manual" && !!config.timestamps && (
+              <div className="col-span-2"><span className="text-gray-500">Timestamps:</span> <code className="bg-gray-800 px-1 rounded">{String(config.timestamps ?? "")}</code></div>
             )}
             {config.mode === "viral" && (
               <>
@@ -450,6 +610,12 @@ export default function JobDetail() {
             <div><span className="text-gray-500">Modelo:</span> {String(config.whisper_model || "large-v3")}</div>
             <div><span className="text-gray-500">Idioma:</span> {String(config.src_lang || "auto-detect")}</div>
             <div><span className="text-gray-500">Device:</span> <span className={device === "cuda" ? "text-green-400" : "text-yellow-400"}>{device.toUpperCase()}</span></div>
+          </div>
+        )}
+        {jobType === "download" && (
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="col-span-2 break-all"><span className="text-gray-500">URL:</span> <a href={String(config.url || "")} target="_blank" rel="noreferrer" className="text-green-400 hover:underline">{String(config.url || "-")}</a></div>
+            <div><span className="text-gray-500">Qualidade:</span> {String(config.quality || "best")}</div>
           </div>
         )}
       </section>
