@@ -19,7 +19,7 @@ warnings.filterwarnings("ignore")
 # CONFIGURACOES GLOBAIS
 # ============================================================================
 
-VERSION = "5.1.0"
+VERSION = "1.0.0"
 
 # Caracteres por segundo por idioma (para estimativa de duracao)
 CPS_POR_IDIOMA = {

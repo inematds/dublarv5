@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-APP_VERSION = "5.3.1"
+APP_VERSION = "1.0.0"
 
 app = FastAPI(
     title="inemaVOX API",

@@ -6,7 +6,7 @@
 
 Suite de voz com IA local. Dubla, transcreve, corta e baixa videos com modelos rodando direto na GPU — sem custo de API, sem nuvem. Interface web com monitor em tempo real.
 
-**Versao atual: 5.3.1**
+**Versao atual: 1.0.0**
 
 ---
 
