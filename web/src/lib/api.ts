@@ -130,6 +130,43 @@ export async function createCutJobWithUpload(
   });
 }
 
+export async function createTtsJob(config: Record<string, unknown>) {
+  return fetchApi("/api/jobs/tts", { method: "POST", body: JSON.stringify(config) });
+}
+
+export async function createVoiceCloneJobWithUpload(
+  file: File,
+  config: Record<string, unknown>,
+  onProgress?: (percent: number) => void,
+) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("config_json", JSON.stringify(config));
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/api/jobs/voice-clone`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        try { reject(new Error(JSON.parse(xhr.responseText).detail || `HTTP ${xhr.status}`)); }
+        catch { reject(new Error(`HTTP ${xhr.status}`)); }
+      }
+    };
+    xhr.onerror = () => reject(new Error("Erro de rede no upload"));
+    xhr.timeout = 600000;
+    xhr.send(formData);
+  });
+}
+
+export function getAudioUrl(jobId: string) {
+  return `${API_BASE}/api/jobs/${jobId}/audio`;
+}
+
 export async function createDownloadJob(config: Record<string, unknown>) {
   return fetchApi("/api/jobs/download", { method: "POST", body: JSON.stringify(config) });
 }

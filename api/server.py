@@ -150,6 +150,61 @@ async def create_cut_job_with_upload(
     return job.to_dict()
 
 
+@app.post("/api/jobs/tts")
+async def create_tts_job(config: dict):
+    """Criar job de geracao de audio a partir de texto."""
+    if "text" not in config:
+        raise HTTPException(400, "Campo obrigatorio: text")
+    config["job_type"] = "tts_generate"
+    if "engine" not in config:
+        config["engine"] = "edge"
+    if "lang" not in config:
+        config["lang"] = "pt"
+    job = await job_manager.create_job(config)
+    return job.to_dict()
+
+
+@app.post("/api/jobs/voice-clone")
+async def create_voice_clone_job(
+    file: UploadFile = File(...),
+    config_json: str = Form(...),
+):
+    """Criar job de voice clone com upload de audio de referencia."""
+    config = json.loads(config_json)
+    if "text" not in config:
+        raise HTTPException(400, "Campo obrigatorio: text")
+    suffix = Path(file.filename).suffix or ".wav"
+    safe_name = f"{uuid.uuid4().hex[:8]}_ref{suffix}"
+    upload_path = UPLOAD_DIR / safe_name
+    with open(upload_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+    config["ref_audio"] = str(upload_path.absolute())
+    config["engine"] = "chatterbox"
+    config["job_type"] = "voice_clone"
+    if "lang" not in config:
+        config["lang"] = "pt"
+    job = await job_manager.create_job(config)
+    return job.to_dict()
+
+
+@app.get("/api/jobs/{job_id}/audio")
+async def download_audio(job_id: str):
+    """Baixar audio gerado (TTS ou Voice Clone)."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job nao encontrado")
+    if job.status != "completed":
+        raise HTTPException(400, "Job nao concluido")
+    audio_dir = job.workdir / "audio_out"
+    for ext in ("wav", "mp3", "ogg"):
+        p = audio_dir / f"generated.{ext}"
+        if p.exists():
+            media = "audio/wav" if ext == "wav" else f"audio/{ext}"
+            return FileResponse(p, media_type=media, filename=f"audio_{job_id}.{ext}")
+    raise HTTPException(404, "Audio nao encontrado")
+
+
 @app.post("/api/jobs/download")
 async def create_download_job(config: dict):
     """Criar job de download de video (YouTube, TikTok, Instagram, etc.)."""
