@@ -1,5 +1,5 @@
 #!/bin/bash
-# Dublar v5 - Start all services
+# inemaVOX - Start all services
 # Usage: ./start.sh [--docker]
 
 set -e
@@ -13,9 +13,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log() { echo -e "${GREEN}[DUBLAR]${NC} $1"; }
-warn() { echo -e "${YELLOW}[DUBLAR]${NC} $1"; }
-err() { echo -e "${RED}[DUBLAR]${NC} $1"; }
+log() { echo -e "${GREEN}[INEMAVOX]${NC} $1"; }
+warn() { echo -e "${YELLOW}[INEMAVOX]${NC} $1"; }
+err() { echo -e "${RED}[INEMAVOX]${NC} $1"; }
 
 cleanup() {
     log "Parando servicos..."
@@ -51,7 +51,7 @@ fi
 
 # ---------- Local mode ----------
 log "========================================="
-log "  Dublar v5 - Iniciando servicos locais"
+log "  inemaVOX - Iniciando servicos locais"
 log "========================================="
 echo ""
 
@@ -103,11 +103,11 @@ else
 fi
 
 # 6.1 Verificar Docker GPU image
-if docker image inspect dublar-pro:gpu &>/dev/null 2>&1; then
-    log "Docker GPU: ${GREEN}dublar-pro:gpu disponivel${NC} (pipeline rodara com GPU via Docker)"
+if docker image inspect inemavox:gpu &>/dev/null 2>&1; then
+    log "Docker GPU: ${GREEN}inemavox:gpu disponivel${NC} (pipeline rodara com GPU via Docker)"
 else
-    warn "Docker GPU: imagem dublar-pro:gpu nao encontrada (pipeline rodara em CPU)"
-    warn "  Para habilitar GPU: docker build -t dublar-pro:gpu ."
+    warn "Docker GPU: imagem inemavox:gpu nao encontrada (pipeline rodara em CPU)"
+    warn "  Para habilitar GPU: docker build -t inemavox:gpu ."
 fi
 
 echo ""
@@ -160,7 +160,7 @@ done
 IP=$(hostname -I | awk '{print $1}')
 echo ""
 log "========================================="
-log "  Dublar v5 - Tudo no ar!"
+log "  inemaVOX - Tudo no ar!"
 log "========================================="
 echo ""
 log "  Dashboard:     http://$IP:3010"

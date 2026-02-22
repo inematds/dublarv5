@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    container_name: dublar-api
+    container_name: inemavox-api
     ports:
       - "8010:8010"
     volumes:
@@ -34,7 +34,7 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
-    container_name: dublar-web
+    container_name: inemavox-web
     ports:
       - "3010:3010"
     environment:

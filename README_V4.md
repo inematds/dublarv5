@@ -1,6 +1,6 @@
-# Dublar Pro v4.0
+# inemaVOX - Dublar Pro v4.0 (legado)
 
-Pipeline profissional de dublagem automatica de videos.
+Suite de voz profissional — dublagem automatica de videos com IA.
 
 ## Novidades v4
 

@@ -1,4 +1,4 @@
-"""Dublar Pro API - FastAPI server com WebSocket para progresso em tempo real."""
+"""inemaVOX API - FastAPI server com WebSocket para progresso em tempo real."""
 
 import json
 import os
@@ -34,9 +34,9 @@ async def lifespan(app: FastAPI):
 APP_VERSION = "5.3.1"
 
 app = FastAPI(
-    title="Dublar v5 API",
+    title="inemaVOX API",
     version=APP_VERSION,
-    description="API para pipeline de dublagem, corte e transcricao automatica de videos",
+    description="inemaVOX - Suite de voz com IA local: dublagem, transcricao, corte e download de videos",
     lifespan=lifespan,
 )
 

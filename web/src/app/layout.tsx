@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "inemaVOX 1.0.0 - Pipeline de Dublagem",
-  description: "Interface web para dublagem automatica de videos com IA",
+  title: "inemaVOX 1.0.0 - Suite de Voz com IA",
+  description: "Suite de voz local com IA: dubla, transcreve, corta e baixa videos com GPU",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

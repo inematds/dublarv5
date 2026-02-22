@@ -1,4 +1,4 @@
-# Dublar Video
+# inemaVOX - Dublar Video
 
 Traduz e dubla automaticamente qualquer video usando IA local. O pipeline cobre desde o download do video ate a mixagem final com audio dublado sincronizado.
 

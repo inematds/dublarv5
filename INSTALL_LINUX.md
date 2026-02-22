@@ -1,6 +1,6 @@
-# Instalação do Dublar em Servidor Linux
+# Instalação do inemaVOX em Servidor Linux
 
-Este guia mostra como instalar e configurar o sistema Dublar em um servidor Linux.
+Este guia mostra como instalar e configurar o inemaVOX em um servidor Linux.
 
 ## ⚡ TL;DR - Início Rápido
 

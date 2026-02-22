@@ -1,6 +1,6 @@
-# Dublar Pro v3.0
+# inemaVOX - Dublar Pro v3.0 (legado)
 
-Pipeline de dublagem profissional com todas as otimizações de qualidade.
+Pipeline de voz profissional com todas as otimizações de qualidade.
 
 ## Melhorias Implementadas
 

@@ -2833,7 +2833,7 @@ def calculate_quality_metrics(segments, seg_files, workdir):
 
 def main():
     print("\n" + "="*60)
-    print(f"  DUBLAR PRO v{VERSION} - COMPLETO")
+    print(f"  inemaVOX v{VERSION} - COMPLETO")
     print("  Pipeline de Dublagem Profissional")
     print("  Fases 1-4 implementadas")
     print("="*60)

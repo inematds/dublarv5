@@ -1,6 +1,6 @@
-# Dublar Pro v5
+# inemaVOX
 
-Pipeline completo de processamento de video com IA. Baixa, transcreve, traduz, dubla e corta videos usando modelos locais e na nuvem. Interface web com monitor em tempo real e suporte a GPU via Docker.
+Suite de voz com IA local. Dubla, transcreve, corta e baixa videos com modelos rodando direto na GPU — sem custo de API, sem nuvem. Interface web com monitor em tempo real.
 
 **Versao atual: 5.3.1**
 
@@ -23,7 +23,7 @@ Pipeline completo de processamento de video com IA. Baixa, transcreve, traduz, d
 ┌─────────────────────────────────────────────────────────────┐
 │                    Frontend (Next.js)                         │
 │                    http://localhost:3000                      │
-│  Dashboard | Dublar | Transcrever | Cortar | Baixar | Jobs   │
+│  Dashboard | Dublar | Transcrever | Cortar | Baixar | Jobs  │
 └──────────────────────────┬──────────────────────────────────┘
                            │ REST + WebSocket
 ┌──────────────────────────▼──────────────────────────────────┐
@@ -74,7 +74,7 @@ cd web && npm install && npm run dev -- -p 3000 -H 0.0.0.0 &
 
 ```bash
 # Build da imagem do pipeline
-docker build -t dublar-pro:gpu .
+docker build -t inemavox:gpu .
 
 # Iniciar servicos
 ./start.sh
@@ -323,7 +323,7 @@ jobs/
 ## Estrutura do Projeto
 
 ```
-dublarv5/
+inemavox/
 ├── dublar_pro_v5.py          # Pipeline de dublagem (10 etapas)
 ├── transcrever_v1.py         # Pipeline de transcricao (4 etapas)
 ├── clipar_v1.py              # Pipeline de corte de clips
@@ -412,7 +412,7 @@ dublarv5/
 | Variavel | Padrao | Descricao |
 |----------|--------|-----------|
 | `JOBS_DIR` | `jobs/` | Diretorio para armazenar os jobs |
-| `DOCKER_GPU_IMAGE` | `dublar-pro:gpu` | Imagem Docker com GPU |
+| `DOCKER_GPU_IMAGE` | `inemavox:gpu` | Imagem Docker com GPU |
 | `OLLAMA_HOST` | `http://localhost:11434` | URL do servidor Ollama |
 | `NEXT_PUBLIC_API_URL` | `""` (relativo) | URL do backend para o frontend |
 
@@ -425,7 +425,7 @@ docker run \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   --network host \
-  dublar-pro:gpu
+  inemavox:gpu
 ```
 
 ---
@@ -443,7 +443,7 @@ uvicorn api.server:app --host 0.0.0.0 --port 8000
 ### GPU nao detectada no Docker
 
 ```bash
-docker run --gpus all --entrypoint python dublar-pro:gpu \
+docker run --gpus all --entrypoint python inemavox:gpu \
   -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 # Esperado: 2.6.0a0+...nv25.01 True
 ```
@@ -452,9 +452,9 @@ docker run --gpus all --entrypoint python dublar-pro:gpu \
 
 ```bash
 # Verificar se ha um container Docker travado
-docker ps | grep dublarv5
+docker ps | grep inemavox
 # Matar se necessario:
-docker kill dublarv5-{job_id}
+docker kill inemavox-{job_id}
 ```
 
 ### Ollama nao responde

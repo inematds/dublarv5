@@ -1,8 +1,8 @@
-# Análise do Projeto Dublar v4
+# Análise do Projeto inemaVOX (Dublar v4)
 
 ## O que é o projeto?
 
-**Dublar** é um sistema de **dublagem automática de vídeos** usando inteligência artificial. Ele transcreve, traduz e sintetiza áudio dublado para vídeos, mantendo a sincronização labial.
+**inemaVOX** é uma **suite de voz com IA local** para processamento de vídeos. Dubla, transcreve, corta e baixa vídeos usando modelos rodando diretamente na GPU, sem dependência de APIs externas.
 
 ---
 
