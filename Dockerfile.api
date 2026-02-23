@@ -1,4 +1,4 @@
-# Dublar v5 - Backend API com GPU
+# inemaVOX - Backend API com GPU
 # Neste modo, o backend E o pipeline rodam dentro do mesmo container
 # com acesso direto a GPU via PyTorch NVIDIA
 FROM nvcr.io/nvidia/pytorch:25.01-py3

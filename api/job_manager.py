@@ -18,7 +18,7 @@ from api.stats_tracker import STAGES, estimate_remaining, record_job_complete, f
 JOBS_DIR = Path(os.environ.get("JOBS_DIR", "jobs"))
 PIPELINE_SCRIPT = os.environ.get("PIPELINE_SCRIPT", "dublar_pro_v5.py")
 PYTHON_BIN = os.environ.get("PYTHON_BIN", sys.executable or shutil.which("python3") or "python3")
-DOCKER_GPU_IMAGE = os.environ.get("DOCKER_GPU_IMAGE", "dublar-pro:gpu")
+DOCKER_GPU_IMAGE = os.environ.get("DOCKER_GPU_IMAGE", "inemavox:gpu")
 PROJECT_DIR = Path(__file__).parent.parent.resolve()
 
 # Stages para jobs de corte manual (3 etapas)
@@ -49,6 +49,11 @@ STAGES_TRANSCRIPTION = [
 # Stages para jobs de download (1 etapa)
 STAGES_DOWNLOAD = [
     {"num": 1, "id": "download", "name": "Baixando video", "icon": "⬇"},
+]
+
+# Stages para jobs de TTS / Voice Clone (1 etapa)
+STAGES_TTS = [
+    {"num": 1, "id": "generating", "name": "Gerando audio", "icon": "🔊"},
 ]
 
 
@@ -122,6 +127,8 @@ class Job:
             return STAGES_TRANSCRIPTION
         elif job_type == "download":
             return STAGES_DOWNLOAD
+        elif job_type in ("tts_generate", "voice_clone"):
+            return STAGES_TTS
         else:
             return STAGES
 
@@ -143,6 +150,11 @@ class Job:
         elif job_type == "download":
             dd = self.workdir / "download"
             if dd.exists() and any(dd.glob("video.*")):
+                self.status = "completed"
+                self.error = None
+        elif job_type in ("tts_generate", "voice_clone"):
+            ao = self.workdir / "audio_out"
+            if ao.exists() and any(ao.glob("generated.*")):
                 self.status = "completed"
                 self.error = None
         else:
@@ -523,6 +535,8 @@ class JobManager:
             (job.workdir / "transcription").mkdir(exist_ok=True)
         elif job_type == "download":
             (job.workdir / "download").mkdir(exist_ok=True)
+        elif job_type in ("tts_generate", "voice_clone"):
+            (job.workdir / "audio_out").mkdir(exist_ok=True)
         else:
             (job.workdir / "dublado").mkdir(exist_ok=True)
 
@@ -548,6 +562,8 @@ class JobManager:
                 cmd = self._build_docker_transcribe_command(job)
             elif job_type == "download":
                 cmd = self._build_docker_download_command(job)
+            elif job_type in ("tts_generate", "voice_clone"):
+                cmd = self._build_local_tts_command(job)
             else:
                 cmd = self._build_docker_command(job)
         else:
@@ -557,6 +573,8 @@ class JobManager:
                 cmd = self._build_local_transcribe_command(job)
             elif job_type == "download":
                 cmd = self._build_local_download_command(job)
+            elif job_type in ("tts_generate", "voice_clone"):
+                cmd = self._build_local_tts_command(job)
             else:
                 cmd = self._build_local_command(job)
 
@@ -650,7 +668,7 @@ class JobManager:
             "docker", "run", "--rm",
             "--gpus", "all",
             "--ipc=host",
-            "--name", f"dublarv5-{job.id}",
+            "--name", f"inemavox-{job.id}",
             "--ulimit", "memlock=-1",
             "--ulimit", "stack=67108864",
             "--network", "host",
@@ -754,7 +772,7 @@ class JobManager:
             "docker", "run", "--rm",
             "--gpus", "all",
             "--ipc=host",
-            "--name", f"dublarv5-{job.id}",
+            "--name", f"inemavox-{job.id}",
             "--ulimit", "memlock=-1",
             "--ulimit", "stack=67108864",
             "--network", "host",
@@ -815,7 +833,7 @@ class JobManager:
             "docker", "run", "--rm",
             "--gpus", "all",
             "--ipc=host",
-            "--name", f"dublarv5-{job.id}",
+            "--name", f"inemavox-{job.id}",
             "--ulimit", "memlock=-1",
             "--ulimit", "stack=67108864",
             "--network", "host",
@@ -850,6 +868,26 @@ class JobManager:
 
         return cmd
 
+    def _build_local_tts_command(self, job: Job) -> list:
+        """Monta comando local para geracao de audio (TTS / Voice Clone)."""
+        config = job.config
+        script_path = str(PROJECT_DIR / "tts_direct.py")
+        outdir = str(job.workdir.resolve() / "audio_out")
+
+        cmd = [
+            PYTHON_BIN, script_path,
+            "--text", config["text"],
+            "--lang", config.get("lang", "pt"),
+            "--engine", config.get("engine", "edge"),
+            "--outdir", outdir,
+        ]
+        if config.get("voice"):
+            cmd.extend(["--voice", config["voice"]])
+        if config.get("ref_audio") and Path(config["ref_audio"]).exists():
+            cmd.extend(["--ref", config["ref_audio"]])
+
+        return cmd
+
     def _build_docker_command(self, job: Job) -> list:
         """Monta comando para rodar pipeline dentro do Docker com GPU."""
         config = job.config
@@ -865,7 +903,7 @@ class JobManager:
             "docker", "run", "--rm",
             "--gpus", "all",
             "--ipc=host",
-            "--name", f"dublarv5-{job.id}",
+            "--name", f"inemavox-{job.id}",
             "--ulimit", "memlock=-1",
             "--ulimit", "stack=67108864",
             # Network host para acessar Ollama no localhost:11434

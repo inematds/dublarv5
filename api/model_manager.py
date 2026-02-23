@@ -123,6 +123,15 @@ TTS_ENGINES = [
         "description": "Clona a voz original do video. A dublagem soa como a mesma pessoa.",
         "detail": "Modelo Coqui XTTS que clona a voz do falante original do video. Extrai caracteristicas da voz (timbre, tom, ritmo) e gera a fala traduzida com a mesma voz. Requer GPU e e mais lento. O resultado e impressionante: parece que a pessoa original esta falando em outro idioma.",
     },
+    {
+        "id": "chatterbox",
+        "name": "Chatterbox (Voice Clone Neural)",
+        "needs_gpu": True,
+        "needs_internet": False,
+        "quality": "excelente",
+        "description": "Voice clone zero-shot de alta qualidade. Suporta PT, EN e 20+ idiomas.",
+        "detail": "Modelo neural da Resemble AI. Roteamento automatico: ingles usa Turbo 350M (rapido), outros idiomas usam Multilingual 500M (PT, ES, FR, DE e mais 20 idiomas). Voice clone zero-shot: com --clonar-voz extrai a voz do video e gera o audio dublado com o mesmo timbre. SR de saida: 24000 Hz. Requer conda env 'chatterbox' instalado.",
+    },
 ]
 
 TRANSLATION_ENGINES = [

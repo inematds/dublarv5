@@ -1,5 +1,5 @@
 #!/bin/bash
-# instalar.sh - Script de instalação do Dublar Pro
+# instalar.sh - Script de instalação do inemaVOX
 # Instala todas as dependências necessárias
 
 set -e
@@ -12,7 +12,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  DUBLAR PRO - Instalação de Dependências${NC}"
+echo -e "${BLUE}  inemaVOX - Instalação de Dependências${NC}"
 echo -e "${BLUE}============================================${NC}"
 echo ""
 

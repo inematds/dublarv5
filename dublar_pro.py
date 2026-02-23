@@ -1939,7 +1939,7 @@ def calculate_quality_metrics(segments, seg_files, workdir):
 
 def main():
     print("\n" + "="*60)
-    print(f"  DUBLAR PRO v{VERSION}")
+    print(f"  inemaVOX v{VERSION}")
     print("  Pipeline de Dublagem Profissional")
     print("="*60)
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Dublar v5 - Start all services
+# inemaVOX - Start all services
 # Usage: ./start.sh [--docker]
 
 set -e
@@ -13,9 +13,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log() { echo -e "${GREEN}[DUBLAR]${NC} $1"; }
-warn() { echo -e "${YELLOW}[DUBLAR]${NC} $1"; }
-err() { echo -e "${RED}[DUBLAR]${NC} $1"; }
+log() { echo -e "${GREEN}[INEMAVOX]${NC} $1"; }
+warn() { echo -e "${YELLOW}[INEMAVOX]${NC} $1"; }
+err() { echo -e "${RED}[INEMAVOX]${NC} $1"; }
 
 cleanup() {
     log "Parando servicos..."
@@ -51,7 +51,7 @@ fi
 
 # ---------- Local mode ----------
 log "========================================="
-log "  Dublar v5 - Iniciando servicos locais"
+log "  inemaVOX - Iniciando servicos locais"
 log "========================================="
 echo ""
 
@@ -103,11 +103,11 @@ else
 fi
 
 # 6.1 Verificar Docker GPU image
-if docker image inspect dublar-pro:gpu &>/dev/null 2>&1; then
-    log "Docker GPU: ${GREEN}dublar-pro:gpu disponivel${NC} (pipeline rodara com GPU via Docker)"
+if docker image inspect inemavox:gpu &>/dev/null 2>&1; then
+    log "Docker GPU: ${GREEN}inemavox:gpu disponivel${NC} (pipeline rodara com GPU via Docker)"
 else
-    warn "Docker GPU: imagem dublar-pro:gpu nao encontrada (pipeline rodara em CPU)"
-    warn "  Para habilitar GPU: docker build -t dublar-pro:gpu ."
+    warn "Docker GPU: imagem inemavox:gpu nao encontrada (pipeline rodara em CPU)"
+    warn "  Para habilitar GPU: docker build -t inemavox:gpu ."
 fi
 
 echo ""
@@ -116,15 +116,15 @@ echo ""
 mkdir -p "$DIR/jobs"
 
 # 8. Iniciar Backend API
-log "Iniciando Backend API (porta 8000)..."
-"$DIR/venv/bin/uvicorn" api.server:app --host 0.0.0.0 --port 8000 --reload \
+log "Iniciando Backend API (porta 8010)..."
+"$DIR/venv/bin/python" -m uvicorn api.server:app --host 0.0.0.0 --port 8010 --reload \
     > "$DIR/logs_api.log" 2>&1 &
 API_PID=$!
 
 # Aguardar backend ficar pronto
 for i in $(seq 1 15); do
-    if curl -s http://localhost:8000/api/health &>/dev/null; then
-        log "Backend API: ${GREEN}http://localhost:8000${NC} (PID $API_PID)"
+    if curl -s http://localhost:8010/api/health &>/dev/null; then
+        log "Backend API: ${GREEN}http://localhost:8010${NC} (PID $API_PID)"
         break
     fi
     sleep 1
@@ -136,16 +136,16 @@ for i in $(seq 1 15); do
 done
 
 # 9. Iniciar Frontend
-log "Iniciando Frontend (porta 3000)..."
-cd "$DIR/web" && npm run dev -- -p 3000 -H 0.0.0.0 \
+log "Iniciando Frontend (porta 3010)..."
+cd "$DIR/web" && npm run dev -- -p 3010 -H 0.0.0.0 \
     > "$DIR/logs_web.log" 2>&1 &
 WEB_PID=$!
 cd "$DIR"
 
 # Aguardar frontend ficar pronto
 for i in $(seq 1 15); do
-    if curl -s http://localhost:3000 &>/dev/null; then
-        log "Frontend:    ${GREEN}http://localhost:3000${NC} (PID $WEB_PID)"
+    if curl -s http://localhost:3010 &>/dev/null; then
+        log "Frontend:    ${GREEN}http://localhost:3010${NC} (PID $WEB_PID)"
         break
     fi
     sleep 1
@@ -160,14 +160,14 @@ done
 IP=$(hostname -I | awk '{print $1}')
 echo ""
 log "========================================="
-log "  Dublar v5 - Tudo no ar!"
+log "  inemaVOX - Tudo no ar!"
 log "========================================="
 echo ""
-log "  Dashboard:     http://$IP:3000"
-log "  Nova Dublagem: http://$IP:3000/new"
-log "  Jobs:          http://$IP:3000/jobs"
-log "  API:           http://$IP:8000/api/health"
-log "  API Docs:      http://$IP:8000/docs"
+log "  Dashboard:     http://$IP:3010"
+log "  Nova Dublagem: http://$IP:3010/new"
+log "  Jobs:          http://$IP:3010/jobs"
+log "  API:           http://$IP:8010/api/health"
+log "  API Docs:      http://$IP:8010/docs"
 echo ""
 log "  Logs backend:  tail -f $DIR/logs_api.log"
 log "  Logs frontend: tail -f $DIR/logs_web.log"

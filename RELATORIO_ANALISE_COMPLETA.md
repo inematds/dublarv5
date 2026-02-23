@@ -1,4 +1,4 @@
-# Relatorio de Analise Completa - Dublar Pro v4
+# Relatorio de Analise Completa - inemaVOX (Dublar Pro v4)
 ## Data: 2026-02-09
 
 ---
@@ -89,7 +89,7 @@ GPU NVIDIA GB10:
 
 ## 2.1 Visao Geral
 
-**Dublar Pro v4.0.0** - Pipeline profissional de dublagem automatica de videos
+**inemaVOX (base Dublar Pro v4.0.0)** - Suite de voz com IA para processamento de videos
 
 - **Arquivo principal**: `dublar_pro_v4.py` (3042 linhas)
 - **Versao anterior**: `dublar_pro.py` (v3.0)

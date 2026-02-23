@@ -1,11 +1,11 @@
 #!/bin/bash
-# dublar-gpu.sh - Executa pipeline de dublagem com GPU via Docker
+# dublar-gpu.sh - inemaVOX: Executa pipeline de dublagem com GPU via Docker
 # Usa container NVIDIA PyTorch otimizado para GB10 Blackwell
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-IMAGE_NAME="dublar-pro:gpu"
+IMAGE_NAME="inemavox:gpu"
 
 # Cores
 RED='\033[0;31m'
@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  DUBLAR PRO GPU - Pipeline via Docker${NC}"
+echo -e "${BLUE}  inemaVOX - Pipeline via Docker (GPU)${NC}"
 echo -e "${BLUE}============================================${NC}"
 
 # Verificar Docker

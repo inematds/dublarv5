@@ -495,7 +495,7 @@ export default function NewJob() {
           )}
 
           {/* Clone Voice */}
-          {ttsEngine === "xtts" && (
+          {(ttsEngine === "xtts" || ttsEngine === "chatterbox") && (
             <label className="flex items-center gap-2 mb-4 text-sm">
               <input type="checkbox" checked={cloneVoice} onChange={(e) => setCloneVoice(e.target.checked)} />
               Clonar voz do video original

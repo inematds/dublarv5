@@ -1,5 +1,5 @@
 #!/bin/bash
-# dublar-pro.sh - Script de execução do Dublar Pro
+# dublar-pro.sh - inemaVOX: Script de execução do pipeline
 # Detecta automaticamente GPU/CPU e configura ambiente
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  DUBLAR PRO - Pipeline de Dublagem${NC}"
+echo -e "${BLUE}  inemaVOX - Pipeline de Dublagem${NC}"
 echo -e "${BLUE}============================================${NC}"
 
 # Verificar Python

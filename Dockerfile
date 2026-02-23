@@ -1,4 +1,4 @@
-# Dublar Pro v5 - Dockerfile com GPU NVIDIA
+# inemaVOX - Dockerfile com GPU NVIDIA
 # Base: NVIDIA PyTorch container (testado com GB10 Blackwell)
 FROM nvcr.io/nvidia/pytorch:25.01-py3
 

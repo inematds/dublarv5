@@ -7,7 +7,7 @@ type Job = Record<string, unknown>;
 
 function JobTypeTag({ jobType }: { jobType: string }) {
   const tags: Record<string, { label: string; className: string }> = {
-    dubbing: { label: "Dublar", className: "bg-blue-500/20 text-blue-400 border border-blue-500/30" },
+    dubbing: { label: "Dublagem", className: "bg-blue-500/20 text-blue-400 border border-blue-500/30" },
     cutting: { label: "Cortar", className: "bg-orange-500/20 text-orange-400 border border-orange-500/30" },
     transcription: { label: "Transcrever", className: "bg-purple-500/20 text-purple-400 border border-purple-500/30" },
   };
@@ -138,7 +138,7 @@ export default function JobsPage() {
       {filtered.length === 0 ? (
         <div className="border border-gray-800 rounded-lg p-12 text-center text-gray-500">
           {jobs.length === 0 ? (
-            <>Nenhum job ainda. <a href="/new" className="text-blue-400 hover:underline">Dublar</a>,{" "}
+            <>Nenhum job ainda. <a href="/new" className="text-blue-400 hover:underline">Dublagem</a>,{" "}
               <a href="/transcribe" className="text-purple-400 hover:underline">Transcrever</a> ou{" "}
               <a href="/cut" className="text-orange-400 hover:underline">Cortar</a> um vídeo.</>
           ) : (
